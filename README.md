@@ -1,4 +1,8 @@
 ### yoloboros
+<p align="center">
+  <img src="https://raw.githubusercontent.com/one-two-four-cee-four-one-plus/yoloboros/main/logo.webp" width="250" height="250"/>
+</p>
+
 `yoloboros` is a simple library for creating interactive webapps in python. It is framework agnostic and doesn't require any additional dependencies. `yoloboros` provides simple API for creating reusable components in python, generates HTML and js code for them and provides a unified way to communicate between components and server.
 `yoloboros` can be plugged into any web framework, albeit being relatively straightforward with the structure and interaction with the server:
 - No manual request/response handling
@@ -6,9 +10,9 @@
 - No manual serialization/deserialization
 - No templating
 
-`yolobors` is very similar to nagare, but with more expressive API and more flexibility (nagare require stackless python and doesn't support python 3) and not specifically tailored for data apps like dash.
+`yolobors` is very similar to nagare, but with more expressive API and more flexibility (nagare requires stackless python and doesn't support python 3) and not specifically tailored for data apps like dash.
 
-### Frameworks integration
+### Frameworks integrations
 WIP
 
 ### Example
