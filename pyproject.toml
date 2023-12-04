@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "yoloboros"
+version = "0.0.1"
+description = ""
+authors = ["one-two-four-cee-four-one-plus <one.two.four.cee.four.one.plus@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+packages = [
+    { include = "yoloboros", from="src" },
+]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
