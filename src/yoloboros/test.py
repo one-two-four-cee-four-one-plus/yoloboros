@@ -5,12 +5,17 @@ class App(Application):
     pass
 
 
-class Root(App.component):
+class Counter(App.component):
     def init(self):
         return {"number": 0}
 
     def render(self):
         f"Number: {self.state.number}"
+
+
+class Root(App.component):
+    def render(self):
+        with App.Counter as c: pass
 
         with p:
             "Input value to add/substract"
@@ -51,12 +56,9 @@ class Handler(BaseHTTPRequestHandler):
             <meta charset="UTF-8">
             </head>
             <body>
-            <div id="root"></div>
-            <script>
-            {js}
-            const __root = {Root.build()};
-            __root.render('root');
-            </script>
+            <script>{js}</script>
+            <script>{App.code()}</script>
+            {App.mount("Root")}
             </body>
             </html>
             """.encode()

@@ -808,6 +808,9 @@ TABLE = (
     (JsIndex, ast.Index),
     (JsUAdd, ast.UAdd),
     (JsUSub, ast.USub),
+
+    # special
+    (MultilineLambda, MultilineLambda)
 )
 
 

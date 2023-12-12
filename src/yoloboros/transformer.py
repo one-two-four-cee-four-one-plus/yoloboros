@@ -2,12 +2,13 @@ import ast
 import inspect
 import textwrap
 
-from yoloboros import grammar
+from yoloboros import grammar, constants
 
 
 class BaseRenderer(ast.NodeTransformer):
-    def __init__(self, value):
+    def __init__(self, value, namespace=None):
         self.value = value
+        self.namespace = namespace or dict()
 
     def walk(self):
         if isinstance(self.value, str):
@@ -97,7 +98,7 @@ class NodeRenderer(BaseRenderer):
             and not isinstance(self.parent_stack[-2], ast.With)
         ):
             return ast.Call(
-                func=ast.Name(id="__text", ctx=ast.Load()),
+                func=ast.Name(id=constants.COMPONENT_TEXT, ctx=ast.Load()),
                 args=[ast.Name(id="current", ctx=ast.Load()), ast.Constant(node.value)],
                 keywords=[],
             )
@@ -112,7 +113,7 @@ class NodeRenderer(BaseRenderer):
         ):
             values = [self.visit(value) for value in node.values]
             return ast.Call(
-                func=ast.Name(id="__text", ctx=ast.Load()),
+                func=ast.Name(id=constants.COMPONENT_TEXT, ctx=ast.Load()),
                 args=[ast.Name(id="current", ctx=ast.Load()), ast.JoinedStr(values)],
                 keywords=[],
             )
@@ -120,6 +121,7 @@ class NodeRenderer(BaseRenderer):
 
     def visit_FunctionDef(self, node):
         if node.name == "render":
+            node.name = constants.COMPONENT_RENDER
             node.body = [self.visit(stmt) for stmt in node.body]
             node.args.args += [
                 ast.keyword(arg="current", value=ast.Constant(None)),
@@ -155,23 +157,31 @@ class NodeRenderer(BaseRenderer):
             node.body = [nested]
             return self.visit(node)
 
-        if isinstance(node.items[0].context_expr, ast.Call):
-            attrs = JsTranslator(
-                ast.Dict(
-                    keys=[
-                        ast.Constant(key.arg)
-                        for key in node.items[0].context_expr.keywords
-                    ],
-                    values=[
-                        self.visit(value.value)
-                        for value in node.items[0].context_expr.keywords
-                    ],
-                )
-            ).walk()
-            tag = node.items[0].context_expr.func.id
-        else:
-            attrs = grammar.JsConstant(None)
-            tag = node.items[0].context_expr.id
+        components = set([i.__name__ for i in self.namespace['app']().component.registry.values()])
+
+        match node.items[0].context_expr:
+            case ast.Call():
+                attrs = JsTranslator(
+                    ast.Dict(
+                        keys=[
+                            ast.Constant(key.arg)
+                            for key in node.items[0].context_expr.keywords
+                        ],
+                        values=[
+                            self.visit(value.value)
+                            for value in node.items[0].context_expr.keywords
+                        ],
+                    )
+                ).walk()
+                tag = node.items[0].context_expr.func.id
+            case ast.Attribute():
+                attrs = grammar.JsConstant(None)
+                if node.items[0].context_expr.attr not in components:
+                    raise Exception()
+                tag = 'yolo:' + node.items[0].context_expr.attr
+            case _:
+                attrs = grammar.JsConstant(None)
+                tag = node.items[0].context_expr.id
 
         lambda_ = grammar.MultilineLambda(
             args=grammar.Jsarguments(
@@ -186,7 +196,7 @@ class NodeRenderer(BaseRenderer):
 
         body = [
             grammar.JsCall(
-                func=grammar.JsName(id="__create_element", ctx=ast.Load()),
+                func=grammar.JsName(id=constants.COMPONENT_NODE_CREATE, ctx=ast.Load()),
                 args=[
                     grammar.JsConstant(tag),
                     attrs,
@@ -204,7 +214,7 @@ class NodeRenderer(BaseRenderer):
                 grammar.JsAssign(
                     targets=[grammar.JsName(id=name)],
                     value=grammar.JsCall(
-                        func=grammar.JsName(id="__wrap", ctx=ast.Load()),
+                        func=grammar.JsName(id=constants.COMPONENT_WRAP, ctx=ast.Load()),
                         args=[grammar.JsName(id="current")],
                         keywords=[],
                     ),
@@ -215,8 +225,8 @@ class NodeRenderer(BaseRenderer):
 
 
 class ActionRenderer(BaseRenderer):
-    def __init__(self, action, value):
-        super().__init__(value)
+    def __init__(self, action, value, **kwargs):
+        super().__init__(value, **kwargs)
         self.action = action
         self.request = []
         self.response = []
@@ -259,14 +269,9 @@ class ActionRenderer(BaseRenderer):
     def build_funcs(self):
         self.walk()
 
-        inner_request_func_name = f"inner_request_{self.action}"
-        request_func_name = f"request_{self.action}"
-        receive_func_name = f"receive_{self.action}"
-
-        inner_request_func = ast.Module(
+        inner_request_func = JsTranslator(ast.Module(
             body=[
-                ast.FunctionDef(
-                    name=inner_request_func_name,
+                grammar.MultilineLambda(
                     args=ast.arguments(
                         posonlyargs=[],
                         args=[],
@@ -275,16 +280,14 @@ class ActionRenderer(BaseRenderer):
                         defaults=[],
                     ),
                     body=self.request,
-                    decorator_list=[],
                 )
             ],
             type_ignores=[],
-        )
+        )).walk()
 
-        receive_func = ast.Module(
+        receive_func = JsTranslator(ast.Module(
             body=[
-                ast.FunctionDef(
-                    name=receive_func_name,
+                grammar.MultilineLambda(
                     args=ast.arguments(
                         posonlyargs=[],
                         args=[ast.arg(arg="request"), ast.arg(arg="response")],
@@ -293,16 +296,14 @@ class ActionRenderer(BaseRenderer):
                         defaults=[],
                     ),
                     body=self.receive or [ast.Pass()],
-                    decorator_list=[],
                 )
             ],
             type_ignores=[],
-        )
+        )).walk()
 
-        request_func = ast.Module(
+        request_func = JsTranslator(ast.Module(
             body=[
-                ast.FunctionDef(
-                    name=request_func_name,
+                grammar.MultilineLambda(
                     args=ast.arguments(
                         posonlyargs=[],
                         args=[ast.Name(id="self")],
@@ -312,22 +313,14 @@ class ActionRenderer(BaseRenderer):
                         defaults=[],
                     ),
                     body=[
-                        ast.Assign(
-                            targets=[ast.Name(id="__action", ctx=ast.Store())],
-                            value=ast.Constant(self.action),
-                        ),
-                        inner_request_func,
-                        receive_func,
                         ast.Return(
                             ast.Call(
-                                func=ast.Name(id="__fetch", ctx=ast.Load()),
+                                func=ast.Name(id=constants.COMPONENT_FETCH, ctx=ast.Load()),
                                 args=[
-                                    ast.Name(id="identifier", ctx=ast.Load()),
-                                    ast.Name(id="__action", ctx=ast.Load()),
-                                    ast.Name(
-                                        id=inner_request_func_name, ctx=ast.Load()
-                                    ),
-                                    ast.Name(id=receive_func_name, ctx=ast.Load()),
+                                    ast.Name(id=constants.COMPONENT_IDENTIFIER, ctx=ast.Load()),
+                                    ast.Constant(self.action),
+                                    inner_request_func,
+                                    receive_func,
                                     ast.Starred(
                                         value=ast.Name(id="args", ctx=ast.Load())
                                     ),
@@ -340,7 +333,7 @@ class ActionRenderer(BaseRenderer):
                 )
             ],
             type_ignores=[],
-        )
+        )).walk()
 
         response_func = ast.Module(
             body=[

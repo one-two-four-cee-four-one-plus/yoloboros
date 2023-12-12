@@ -1,4 +1,4 @@
-class DomWrapper {
+class YoloWrapper {
     constructor(element) {
         this.element = element;
     }
@@ -20,12 +20,19 @@ class DomWrapper {
     }
 }
 
-const __wrap = (element) => {
-    return new DomWrapper(element);
+const __yolo__wrap = (element) => {
+    return new YoloWrapper(element);
 };
 
-const __create_element = (tag, attrs=null, parent=null, cb=null) => {
-    const element = document.createElement(tag);
+const __yolo__create_element = (tag, attrs=null, parent=null, cb=null) => {
+    let element = null
+    let yolo_elem = tag.startsWith('yolo:');
+    if (yolo_elem) {
+        element = document.createElement('div');
+        element.setAttribute('id', crypto.randomUUID());
+    } else {
+        element = document.createElement(tag);
+    }
     if (attrs) {
         for (let key in attrs) {
             if ('style' === key) {
@@ -39,6 +46,9 @@ const __create_element = (tag, attrs=null, parent=null, cb=null) => {
             }
         }
     }
+    if (yolo_elem) {
+        YOLO_COMPONENTS[tag.substr(5)].render(element)
+    }
     if (cb) {
         cb(element);
     }
@@ -48,8 +58,8 @@ const __create_element = (tag, attrs=null, parent=null, cb=null) => {
     return element;
 };
 
-const __text = (element, text) => {
-    if (element instanceof DomWrapper) {
+const __yolo__text = (element, text) => {
+    if (element instanceof YoloWrapper) {
         element = element.element;
     }
 
@@ -60,7 +70,7 @@ const __text = (element, text) => {
     element.innerHTML += text;
 };
 
-class Component {
+class YoloComponent {
     constructor(identifier, init, render, actions) {
         this.identifier = identifier;
         this.init = init;
@@ -71,28 +81,32 @@ class Component {
         this.state = this.init();
         this.domid = null;
         this.cid = crypto.randomUUID();
-        REGISTRY[this.cid] = this;
+        YOLO_REGISTRY[this.cid] = this;
     }
 
-    render(domid=null) {
-        if (domid) {
-            this.domid = domid;
+    render(domid_or_element=null) {
+        if (typeof domid_or_element == 'string') {
+            this.domid = domid_or_element;
+            const element = document.getElementById(this.domid);
+            element.innerHTML = '';
+            this.namespace = {};
+            this._render(this, element, this.action, this.call);
+        } else if (domid_or_element instanceof Node) {
+            domid_or_element.innerHTML = '';
+            this.namespace = {};
+            this._render(this, domid_or_element, this.action, this.call);
         }
-        const element = document.getElementById(this.domid);
-        element.innerHTML = '';
-        this.namespace = {};
-        this._render(this, element, this.action, this.call);
     }
 }
 
-const __make_component = (identifier, init, render, actions) => {
-    return new Component(identifier, init, render, actions);
+const __yolo__make_component = (identifier, init, render, actions) => {
+    return new YoloComponent(identifier, init, render, actions);
 };
 
-var REGISTRY = {
-};
+var YOLO_REGISTRY = {};
+var YOLO_COMPONENTS = {};
 
-const __fetch = (identifier, action, request_json, callback, ...args) => {
+const __yolo__fetch = (identifier, action, request_json, callback, ...args) => {
     const request = new XMLHttpRequest();
     request.open('POST', `/`, true);
     request.setRequestHeader('Content-Type', 'application/json');
