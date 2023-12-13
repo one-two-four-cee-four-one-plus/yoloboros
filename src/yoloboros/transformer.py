@@ -6,6 +6,70 @@ import textwrap
 from yoloboros import grammar, constants
 
 
+def pyodidize(body, pyodide=ast.Name(id='pyodide'), locals=None):
+    if isinstance(body[-1], ast.Return):
+        body[-1] = body[-1].value
+    body = ast.Module(body=body, type_ignores=[])
+    body = ast.unparse(ast.fix_missing_locations(body))
+    args = [grammar.MultilineConstant(value=body)]
+    if locals:
+        items = locals.items()
+        args.append(
+            ast.Dict(
+                keys=[ast.Constant('locals')],
+                values=[
+                    call(
+                        func=ast.Attribute(value=pyodide, attr='toPy'),
+                        args=[ast.Dict(keys=[i[0] for i in items], values=[i[1] for i in items])],
+                    )
+                ]
+            )
+        )
+
+        return call(
+            func=ast.Attribute(
+                value=pyodide,
+                attr='runPython'
+            ),
+            args=args
+        )
+
+
+def arguments(cls=ast.arguments, **kwargs):
+    return cls(
+        posonlyargs=kwargs.get('posonlyargs', []),
+        args=kwargs.get('args', []),
+        vararg=kwargs.get('vararg', []),
+        kwonlyargs=kwargs.get('kwonlyargs', []),
+        kw_defaults=kwargs.get('kw_defaults', []),
+        defaults=kwargs.get('defaults', []),
+    )
+
+
+def js_arguments(**kwargs):
+    return arguments(cls=grammar.Jsarguments, **kwargs)
+
+
+def call(**kwargs):
+    return ast.Call(
+        func=kwargs['func'],
+        args=kwargs.get('args', []),
+        keywords=kwargs.get('keywords', []),
+    )
+
+
+def function(**kwargs):
+    return ast.FunctionDef(
+        name=kwargs['name'],
+        args=kwargs.get('args', []),
+        body=kwargs['body'],
+        decorator_list=kwargs.get('decorator_list', []),
+    )
+
+def module(*body):
+    return ast.Module(body=body, type_ignores=[])
+
+
 class BaseRenderer(ast.NodeTransformer):
     def __init__(self, value, namespace=None):
         self.value = value
@@ -90,14 +154,13 @@ class NodeRenderer(BaseRenderer):
             else:
                 args = [ast.Name(id="self"), ast.Constant(node.annotation.value), *node.value.args]
 
-        return ast.Call(
+        return call(
             func=ast.Attribute(
-                value=ast.Name(id=node.target.id, ctx=ast.Load()),
+                value=ast.Name(id=node.target.id),
                 attr=method,
                 ctx=ast.Load(),
             ),
             args=args,
-            keywords=[],
         )
 
     def visit_Constant(self, node):
@@ -107,16 +170,16 @@ class NodeRenderer(BaseRenderer):
             and not isinstance(self.parent_stack[-2], ast.With)
             and not getattr(self, '_visiting_JoinedStr', False)
         ):
-            return ast.Call(
-                func=ast.Name(id=constants.COMPONENT_TEXT, ctx=ast.Load()),
+            return call(
+                func=ast.Name(id=constants.COMPONENT_TEXT),
                 args=[
-                    ast.Name(id="current", ctx=ast.Load()),
+                    ast.Name(id="current"),
+                    # todo: write parser using https://docs.python.org/3/library/html.parser.html
                     ast.Constant(
                         textwrap.dedent(node.value).replace("\n", "<br>")
                         .replace('"', "'").replace(" ", "&nbsp;")
                     )
                 ],
-                keywords=[],
             )
         return node
 
@@ -131,8 +194,8 @@ class NodeRenderer(BaseRenderer):
             values = [self.visit(value) for value in node.values]
             delattr(self, '_visiting_JoinedStr')
             return ast.Call(
-                func=ast.Name(id=constants.COMPONENT_TEXT, ctx=ast.Load()),
-                args=[ast.Name(id="current", ctx=ast.Load()), ast.JoinedStr(values)],
+                func=ast.Name(id=constants.COMPONENT_TEXT),
+                args=[ast.Name(id="current"), ast.JoinedStr(values)],
                 keywords=[],
             )
         return node
@@ -159,7 +222,7 @@ class NodeRenderer(BaseRenderer):
                                 ),
                             )
                         ],
-                        value=ast.Name(id=node.name, ctx=ast.Load()),
+                        value=ast.Name(id=node.name),
                     ),
                 ],
                 type_ignores=[],
@@ -173,17 +236,10 @@ class NodeRenderer(BaseRenderer):
 
     def inlined_with(self, node):
         if any(isinstance(node, ast.Yield) for node in ast.walk(node)):
-            func_def = ast.FunctionDef(
+            func_def = function(
                 name="inlined_with",
-                args=ast.arguments(
-                    posonlyargs=[],
-                    args=[],
-                    kwonlyargs=[],
-                    kw_defaults=[],
-                    defaults=[],
-                ),
+                args=arguments(),
                 body=node.body,
-                decorator_list=[],
             )
             unparsed = ast.unparse(ast.fix_missing_locations(func_def))
             name = f'anon_{hashlib.md5(unparsed.encode()).hexdigest()}'
@@ -192,22 +248,18 @@ class NodeRenderer(BaseRenderer):
             lambda_ = request
         else:
             lambda_ = grammar.MultilineLambda(
-                args=grammar.Jsarguments(
-                    posonlyargs=[],
+                args=js_arguments(
                     args=(
-                        [grammar.JsName(id=node.items[0].optional_vars.id, ctx=ast.Load())]
+                        [grammar.JsName(id=node.items[0].optional_vars.id)]
                         if node.items[0].optional_vars
                         else []
                     ),
-                    kwonlyargs=[],
-                    kw_defaults=[],
-                    defaults=[],
                 ),
                 body=[JsTranslator(self.visit(stmt)).walk() for stmt in node.body],
             )
 
         return grammar.JsCall(
-            func=grammar.JsName(id=constants.COMPONENT_ADD_EVENT_LISTENER, ctx=ast.Load()),
+            func=grammar.JsName(id=constants.COMPONENT_ADD_EVENT_LISTENER),
             args=[
                 JsTranslator(node.items[0].context_expr.value).walk(),
                 grammar.JsConstant(node.items[0].context_expr.attr.lstrip('on')),
@@ -257,12 +309,8 @@ class NodeRenderer(BaseRenderer):
                 tag = node.items[0].context_expr.id
 
         lambda_ = grammar.MultilineLambda(
-            args=grammar.Jsarguments(
-                posonlyargs=[],
-                args=[grammar.JsName(id="current", ctx=ast.Load())],
-                kwonlyargs=[],
-                kw_defaults=[],
-                defaults=[],
+            args=js_arguments(
+                args=[grammar.JsName(id="current")],
             ),
             body=[JsTranslator(self.visit(stmt)).walk() for stmt in node.body],
         )
@@ -339,66 +387,94 @@ class ActionRenderer(BaseRenderer):
             case _:
                 self.target.append(node)
 
-    def build_funcs(self, text_request=True):
+    def build_funcs(self, text_request=True, use_pyodide=False):
         self.walk()
+
+        if use_pyodide:
+            if isinstance(self.request[-1], ast.Return):
+                self.request[-1] = self.request[-1].value
+            self.request = ast.Module(body=self.request, type_ignores=[])
+            self.request = ast.unparse(ast.fix_missing_locations(self.request))
+            self.request = [ast.Return(
+                value=call(
+                    func=ast.Attribute(
+                        value=ast.Name(id='pyodide'),
+                        attr='runPython'
+                    ),
+                    args=[grammar.MultilineConstant(value=self.request)],
+                )
+            )]
+
+            if isinstance(self.receive[-1], ast.Return):
+                self.receive[-1] = self.receive[-1].value
+            self.receive = ast.Module(body=self.receive, type_ignores=[])
+            self.receive = ast.unparse(ast.fix_missing_locations(self.receive))
+            self.receive = [ast.Return(
+                value=call(
+                    func=ast.Attribute(
+                        value=ast.Name(id='pyodide'),
+                        attr='runPython'
+                    ),
+                    args=[
+                        grammar.MultilineConstant(value=self.receive),
+                        ast.Dict(
+                            keys=[ast.Constant('locals')],
+                            values=[
+                                call(
+                                    func=ast.Attribute(
+                                        value=ast.Name(id='pyodide'),
+                                        attr='toPy'
+                                    ),
+                                    args=[
+                                        ast.Dict(
+                                            keys=[ast.Constant(i) for i in ('request', 'response', 'self')],
+                                            values=[ast.Name(id=i) for i in ('request', 'response', 'self')]
+                                        )
+                                    ],
+                                )
+                            ]
+                        )
+                    ],
+                )
+            )]
 
         inner_request_func = JsTranslator(ast.Module(
             body=[
                 grammar.MultilineLambda(
-                    args=ast.arguments(
-                        posonlyargs=[],
-                        args=[],
-                        kwonlyargs=[],
-                        kw_defaults=[],
-                        defaults=[],
-                    ),
+                    args=arguments(),
                     body=self.request,
                 )
             ],
             type_ignores=[],
         )).walk()
 
-        receive_func = JsTranslator(ast.Module(
+        receive_func = ast.Module(
             body=[
                 grammar.MultilineLambda(
-                    args=ast.arguments(
-                        posonlyargs=[],
-                        args=[ast.arg(arg="request"), ast.arg(arg="response")],
-                        kwonlyargs=[],
-                        kw_defaults=[],
-                        defaults=[],
-                    ),
+                    args=arguments(args=[ast.arg(arg="request"), ast.arg(arg="response")]),
                     body=self.receive or [ast.Pass()],
                 )
             ],
             type_ignores=[],
-        )).walk()
+        )
 
-        request_func = JsTranslator(ast.Module(
+        request_func = ast.Module(
             body=[
                 grammar.MultilineLambda(
-                    args=ast.arguments(
-                        posonlyargs=[],
+                    args=arguments(
                         args=self.rest_args,
                         vararg=ast.arg("args"),
-                        kwonlyargs=[],
-                        kw_defaults=[],
-                        defaults=[],
                     ),
                     body=[
                         ast.Return(
-                            ast.Call(
+                            call(
                                 func=ast.Name(id=constants.COMPONENT_FETCH, ctx=ast.Load()),
                                 args=[
                                     ast.Name(id=constants.COMPONENT_IDENTIFIER, ctx=ast.Load()),
                                     ast.Constant(self.action),
                                     inner_request_func,
                                     receive_func,
-                                    ast.Starred(
-                                        value=ast.Name(id="args", ctx=ast.Load())
-                                    ),
-                                ],
-                                keywords=[],
+                                ]
                             )
                         ),
                     ],
@@ -406,24 +482,19 @@ class ActionRenderer(BaseRenderer):
                 )
             ],
             type_ignores=[],
-        )).walk()
+        )
 
         response_func = ast.Module(
             body=[
-                ast.FunctionDef(
+                function(
                     name=f"response_{self.action}",
-                    args=ast.arguments(
-                        posonlyargs=[],
+                    args=arguments(
                         args=[
                             ast.arg(arg="self"),
                             ast.arg(arg="request")
                         ],
-                        kwonlyargs=[],
-                        kw_defaults=[],
-                        defaults=[],
                     ),
                     body=self.response,
-                    decorator_list=[],
                 )
             ],
             type_ignores=[],
@@ -431,12 +502,15 @@ class ActionRenderer(BaseRenderer):
 
         request_func = ast.fix_missing_locations(request_func)
         response_func = ast.fix_missing_locations(response_func)
+
+        if text_request:
+            request_func = JsTranslator(request_func).walk().render()
+        else:
+            request_func = JsTranslator(request_func).walk()
+
         ns = {}
         exec(ast.unparse(response_func), ns)
-        return (
-            JsTranslator(request_func).walk().render() if text_request else request_func,
-            ns.popitem()[1]
-        )
+        return (request_func,ns.popitem()[1])
 
 
 class FetchRenderer(ActionRenderer):
@@ -445,24 +519,20 @@ class FetchRenderer(ActionRenderer):
         self.identifier = identifier
         self.target = self.response
 
-    def build_funcs(self):
+    def build_funcs(self, use_pyodide=False):
         self.walk()
+
         response_func = ast.Module(
             body=[
-                ast.FunctionDef(
+                function(
                     name=f"response_{self.action}",
-                    args=ast.arguments(
-                        posonlyargs=[],
+                    args=arguments(
                         args=[
                             ast.arg(arg="self"),
                             ast.arg(arg="request")
                         ],
-                        kwonlyargs=[],
-                        kw_defaults=[],
-                        defaults=[],
                     ),
                     body=self.response,
-                    decorator_list=[],
                 )
             ],
             type_ignores=[],
@@ -484,15 +554,46 @@ class FetchRenderer(ActionRenderer):
             )
         else:
             self.receive = [state_update]
+
+        if use_pyodide:
+            if isinstance(self.receive[-1], ast.Return):
+                self.receive[-1] = self.receive[-1].value
+            self.receive = ast.Module(body=self.receive, type_ignores=[])
+            self.receive = ast.unparse(ast.fix_missing_locations(self.receive))
+            self.receive = [ast.Return(
+                value=call(
+                    func=ast.Attribute(
+                        value=ast.Name(id='pyodide'),
+                        attr='runPython'
+                    ),
+                    args=[
+                        grammar.MultilineConstant(value=self.receive),
+                        ast.Dict(
+                            keys=[ast.Constant('locals')],
+                            values=[
+                                call(
+                                    func=ast.Attribute(
+                                        value=ast.Name(id='pyodide'),
+                                        attr='toPy'
+                                    ),
+                                    args=[
+                                        ast.Dict(
+                                            keys=[ast.Constant(i) for i in ('request', 'response', 'self')],
+                                            values=[ast.Name(id=i) for i in ('request', 'response', 'self')]
+                                        )
+                                    ]
+                                )
+                            ]
+                        )
+                    ]
+                )
+            )]
+
         receive_func = JsTranslator(ast.Module(
             body=[
                 grammar.MultilineLambda(
-                    args=ast.arguments(
-                        posonlyargs=[],
+                    args=arguments(
                         args=[ast.arg(arg="request"), ast.arg(arg="response")],
-                        kwonlyargs=[],
-                        kw_defaults=[],
-                        defaults=[],
                     ),
                     body=self.receive,
                 )
@@ -502,43 +603,28 @@ class FetchRenderer(ActionRenderer):
 
         request_func = JsTranslator(ast.Module(
             body=[
-                ast.FunctionDef(
+                function(
                     name=constants.COMPONENT_INIT,
-                    args=ast.arguments(
-                        posonlyargs=[],
+                    args=arguments(
                         args=self.rest_args,
                         vararg=ast.arg("args"),
-                        kwonlyargs=[],
-                        kw_defaults=[],
-                        defaults=[],
                     ),
                     body=[
                         ast.Return(
-                            ast.Call(
+                            call(
                                 func=ast.Name(id=constants.COMPONENT_FETCH, ctx=ast.Load()),
                                 args=[
                                     ast.Name(id=constants.COMPONENT_IDENTIFIER, ctx=ast.Load()),
                                     ast.Constant(self.action),
                                     grammar.MultilineLambda(
-                                        args=ast.arguments(
-                                            posonlyargs=[],
-                                            args=[],
-                                            kwonlyargs=[],
-                                            kw_defaults=[],
-                                            defaults=[],
-                                        ),
+                                        args=arguments(),
                                         body=[ast.Return(value=ast.Dict(keys=[], values=[]))]
                                     ),
                                     receive_func,
-                                    ast.Starred(
-                                        value=ast.Name(id="args", ctx=ast.Load())
-                                    ),
                                 ],
-                                keywords=[],
                             )
                         ),
-                    ],
-                    decorator_list=[],
+                    ]
                 )
             ],
             type_ignores=[],

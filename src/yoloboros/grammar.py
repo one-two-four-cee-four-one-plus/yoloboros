@@ -383,6 +383,12 @@ class JsConstant(JsAST, ast.Constant):
         return f'"{self.value}"' if isinstance(self.value, str) else str(self.value)
 
 
+class MultilineConstant(JsConstant):
+    def render(self):
+        value = textwrap.dedent('\n' + str(self.value))
+        return f'`{value}`'
+
+
 class JsAttribute(JsAST, ast.Attribute):
     _fields = "value", "attr"  # , 'ctx'
     _template = "$value.$attr"

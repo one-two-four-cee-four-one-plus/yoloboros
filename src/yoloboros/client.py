@@ -34,7 +34,7 @@ class ComponentMeta(type):
             if not k.startswith("_") and inspect.isgeneratorfunction(v) and k != 'render' and k != 'fetch':
                 attrs["requests"][k], attrs["responses"][k] = ActionRenderer(
                     v.__name__, v
-                ).build_funcs()
+                ).build_funcs(use_pyodide=attrs['app']().pyodide)
                 del attrs[k]
 
         return super(mcls, ComponentMeta).__new__(mcls, name, bases, attrs)
@@ -55,7 +55,7 @@ class BaseComponent:
     @classmethod
     def build(cls):
         if hasattr(cls, 'fetch'):
-            init, response_fetch = FetchRenderer(cls.identifier, cls.fetch).build_funcs()
+            init, response_fetch = FetchRenderer(cls.identifier, cls.fetch).build_funcs(use_pyodide=cls.app().pyodide)
             cls.responses.setdefault('fetch', response_fetch)
         elif hasattr(cls, 'init'):
             init = JsTranslator(cls.init).walk()
@@ -140,10 +140,6 @@ class Application(BaseApplication, metaclass=AppicationMeta):
         return ';\n'.join(c.build() for c in components)
 
     @classmethod
-    def mount(cls):
-        id = uuid.uuid4()
+    def mount(cls, id):
         name = next((c.__name__ for c in cls.component.registry.values() if c.is_root), None)
-        return f'''
-            <div id="{id}"></div>
-            <script>YOLO_COMPONENTS["{name}"].render("{id}")</script>
-        '''
+        return f'YOLO_COMPONENTS["{name}"].render("{id}")'
