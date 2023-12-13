@@ -164,6 +164,7 @@ class JsIf(JsAST, ast.If):
     }$orelse
     """
 
+    # todo: fix this
     def render(self):
         orelse = ""
         if self.orelse:

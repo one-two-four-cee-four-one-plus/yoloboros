@@ -3,24 +3,54 @@ class YoloWrapper {
         this.element = element;
     }
 
+    get id() {
+        return this.getAttribute('yid') || this.getAttribute('id')
+    }
+
+    get y() {
+        return yolo(this.id)
+    }
+
+    get state() {
+        return yolo(this.id).state
+    }
+
+    set state(value) {
+        yolo(this.id).state = value
+    }
+
+    render() {
+        yolo(this.id).render()
+    }
+
+    get e() {
+        return this.element
+    }
+
     setAttribute(name, value) {
         this.element.setAttribute(name, value);
     }
 
-    setAction(component, name, ...args) {
-        this.element.addEventListener('click', () => {
+    getAttribute(name) {
+        return this.element.getAttribute(name);
+    }
+
+    setAction(component, event, name, ...args) {
+        this.element.addEventListener(event, () => {
             component.actions[name](component, ...args);
         });
     }
 
-    setCall(component, name, ...args) {
-        this.element.addEventListener('click', () => {
+    setCall(component, event, name, ...args) {
+        this.element.addEventListener(event, () => {
             component.namespace[name](...args);
         });
     }
 }
 
 const __yolo__wrap = (element) => {
+    if (!element.getAttribute('id'))
+        element.setAttribute('id', crypto.randomUUID());
     return new YoloWrapper(element);
 };
 
@@ -41,13 +71,16 @@ const __yolo__create_element = (tag, attrs=null, parent=null, cb=null) => {
                 }
             } else if ('class' === key) {
                 element.className = attrs[key];
+            } else if ('html' === key) {
+                element.innerHTML = attrs[key];
             } else {
                 element.setAttribute(key, attrs[key]);
             }
         }
     }
     if (yolo_elem) {
-        YOLO_COMPONENTS[tag.substr(5)].render(element)
+        YOLO_COMPONENTS[tag.substr(5)].render(element);
+        element.setAttribute('yid', YOLO_COMPONENTS[tag.substr(5)].cid);
     }
     if (cb) {
         cb(element);
@@ -78,7 +111,9 @@ class YoloComponent {
         this.actions = actions;
         this.namespace = {};
 
-        this.state = this.init();
+        this.state = null;
+        let val = this.init(this);
+        if (val) { this.state = val; }
         this.domid = null;
         this.cid = crypto.randomUUID();
         YOLO_REGISTRY[this.cid] = this;
@@ -92,9 +127,21 @@ class YoloComponent {
             this.namespace = {};
             this._render(this, element, this.action, this.call);
         } else if (domid_or_element instanceof Node) {
+            if (domid_or_element.getAttribute('id')) {
+                this.domid = domid_or_element.getAttribute('id')
+            } else {
+                this.domid = crypto.randomUUID();
+                domid_or_element.setAttribute('id', this.domid);
+            }
+
             domid_or_element.innerHTML = '';
             this.namespace = {};
             this._render(this, domid_or_element, this.action, this.call);
+        } else if (this.domid) {
+            const element = document.getElementById(this.domid);
+            element.innerHTML = '';
+            this.namespace = {};
+            this._render(this, element, this.action, this.call);
         }
     }
 }
@@ -108,7 +155,7 @@ var YOLO_COMPONENTS = {};
 
 const __yolo__fetch = (identifier, action, request_json, callback, ...args) => {
     const request = new XMLHttpRequest();
-    request.open('POST', `/`, true);
+    request.open('POST', `/`, false);  // TODO: fix race between fetch and render
     request.setRequestHeader('Content-Type', 'application/json');
     request_data = request_json();
     if (args.length > 0) {
@@ -127,3 +174,9 @@ const __yolo__fetch = (identifier, action, request_json, callback, ...args) => {
         'request': request_data,
     }));
 };
+
+const __yolo__add_event_listener = (wrapper, event, callback) => {
+    wrapper.element.addEventListener(event, callback);
+};
+
+const yolo = (id) => YOLO_REGISTRY[id];

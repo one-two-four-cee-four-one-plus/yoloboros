@@ -3,7 +3,7 @@ import uuid
 import inspect
 import textwrap
 
-from yoloboros.transformer import JsTranslator, NodeRenderer, ActionRenderer
+from yoloboros.transformer import JsTranslator, NodeRenderer, ActionRenderer, FetchRenderer
 from yoloboros import constants
 
 
@@ -27,25 +27,11 @@ class ComponentMeta(type):
         else:
             attrs["app"] = next(filter(bool, (getattr(c, 'app', None) for c in bases)), None)
 
-        if name == '__yolo__component':
+        if name in {'__yolo__component', '__yolo__root'}:
             return super(mcls, ComponentMeta).__new__(mcls, name, bases, attrs)
 
-        if render := attrs.get("render"):
-            ns = dict(app=attrs['app'])
-            render = ast.fix_missing_locations(NodeRenderer(render, namespace=ns).walk())
-            attrs["render"] = JsTranslator(render).walk().render()
-        else:
-            attrs["render"] = f"const {constants.COMPONENT_RENDER} = () => null;\n"
-
-        if init := attrs.get("init"):
-            init = JsTranslator(init).walk()
-            init.body[0].name = constants.COMPONENT_INIT
-            attrs["init"] = textwrap.dedent(init.render())
-        else:
-            attrs["init"] = f"const {constants.COMPONENT_INIT} = () => null;\n"
-
         for k, v in attrs.copy().items():
-            if not k.startswith("_") and inspect.isgeneratorfunction(v):
+            if not k.startswith("_") and inspect.isgeneratorfunction(v) and k != 'render' and k != 'fetch':
                 attrs["requests"][k], attrs["responses"][k] = ActionRenderer(
                     v.__name__, v
                 ).build_funcs()
@@ -63,16 +49,38 @@ class BaseComponent:
         identifier = data["identifier"]
         action = data["action"]
         request = data["request"]
-        return cls.registry[identifier].responses[action](request)
+        component = cls.registry[identifier]
+        return component.responses[action](component, request)
 
     @classmethod
     def build(cls):
+        if hasattr(cls, 'fetch'):
+            init, response_fetch = FetchRenderer(cls.identifier, cls.fetch).build_funcs()
+            cls.responses.setdefault('fetch', response_fetch)
+        elif hasattr(cls, 'init'):
+            init = JsTranslator(cls.init).walk()
+            init.body[0].name = constants.COMPONENT_INIT
+            init = textwrap.dedent(init.render())
+        else:
+            init = f"const {constants.COMPONENT_INIT} = () => null;\n"
+
+        if hasattr(cls, 'render'):
+            ns = dict(app=cls.app())
+            render = ast.fix_missing_locations(NodeRenderer(cls.render, namespace=ns).walk())
+            render = JsTranslator(render).walk().render()
+            if actions := ns.get('actions'):
+                for action, (request, response) in actions.items():
+                    cls.requests.setdefault(action, request)
+                    cls.responses.setdefault(action, response)
+        else:
+            render = f"const {constants.COMPONENT_RENDER} = () => null;\n"
+
         ret = textwrap.dedent(
             f"""(() => {{
             const {constants.COMPONENT_IDENTIFIER} = "{cls.identifier}";
             const {constants.COMPONENT_ACTIONS} = {{}};\n
-            {textwrap.indent(cls.init, '    ' * 3).lstrip(' ')}
-            {textwrap.indent(cls.render, '    ' * 3).lstrip(' ')}
+            {textwrap.indent(init, '    ' * 3).lstrip(' ')}
+            {textwrap.indent(render, '    ' * 3).lstrip(' ')}
             """
         ).lstrip()
         for k, v in cls.requests.items():
@@ -90,7 +98,7 @@ class BaseComponent:
         return textwrap.indent(ret, '   ').lstrip(' ')
 
     def __init_subclass__(cls):
-        if cls.__name__ != '__yolo__component':
+        if cls.__name__ not in {'__yolo__component', '__yolo__root'}:
             cls.identifier = str(len(cls.registry))
             cls.registry[cls.identifier] = cls
 
@@ -99,10 +107,15 @@ class AppicationMeta(type):
     def __new__(mcls, name, bases, attrs):
         box = Box()
         class __yolo__component(BaseComponent, metaclass=ComponentMeta, app=box):
+            is_root = False
             registry = dict()
+
+        class __yolo__root(__yolo__component):
+            is_root = True
 
         attrs["_name"] = name
         attrs["component"] = __yolo__component
+        attrs["root"] = __yolo__root
         ret = super(mcls, AppicationMeta).__new__(mcls, name, bases, attrs)
         box._set(ret)
         return ret
@@ -113,10 +126,7 @@ class BaseApplication:
 
 
 class Application(BaseApplication, metaclass=AppicationMeta):
-    router: "path" or "body" = "body"
     pyodide: bool = False
-    pyodide_modules: list = []
-    js_modules: list = []
     vdom: bool = False
 
     @classmethod
@@ -124,13 +134,15 @@ class Application(BaseApplication, metaclass=AppicationMeta):
         return cls.component.process(data)
 
     @classmethod
+    @property
     def code(cls):
         components = cls.component.registry.values()
         return ';\n'.join(c.build() for c in components)
 
     @classmethod
-    def mount(cls, name):
+    def mount(cls):
         id = uuid.uuid4()
+        name = next((c.__name__ for c in cls.component.registry.values() if c.is_root), None)
         return f'''
             <div id="{id}"></div>
             <script>YOLO_COMPONENTS["{name}"].render("{id}")</script>
