@@ -86,10 +86,9 @@ $body
 
 
 class JsAsyncFunctionDef(JsFunctionDef):
-    _template = """
-    const $name = async ($args) {
-    $body
-    }
+    _template = """async function $name($args) {
+$body
+};
     """
 
 
@@ -210,6 +209,7 @@ class JsAssert(JsAST, ast.Assert):
 
 class JsImport(JsAST, ast.Import):
     _fields = ("names",)
+    _template = "import $names;"
 
 
 class JsImportFrom(JsAST, ast.ImportFrom):

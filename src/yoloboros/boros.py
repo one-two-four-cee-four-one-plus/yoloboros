@@ -121,12 +121,13 @@ class AppicationMeta(type):
         return ret
 
 
-class BaseApplication:
+class BaseYoloboros:
     pass
 
 
-class Application(BaseApplication, metaclass=AppicationMeta):
+class Yoloboros(BaseYoloboros, metaclass=AppicationMeta):
     pyodide: bool = False
+    packages: list = []
     vdom: bool = False
 
     @classmethod
@@ -136,10 +137,17 @@ class Application(BaseApplication, metaclass=AppicationMeta):
     @classmethod
     @property
     def code(cls):
+        packages = ''
+        if cls.pyodide and cls.packages:
+            packages += 'await window.pyodide.loadPackage("micropip");\n'
+            packages += 'const micropip = window.pyodide.pyimport("micropip");\n'
+            for package_name in cls.packages:
+                packages += f'await micropip.install("{package_name}");\n'
+
         components = cls.component.registry.values()
-        return ';\n'.join(c.build() for c in components)
+        return packages + ';\n'.join(c.build() for c in components)
 
     @classmethod
     def mount(cls, id):
         name = next((c.__name__ for c in cls.component.registry.values() if c.is_root), None)
-        return f'YOLO_COMPONENTS["{name}"].render("{id}")'
+        return cls.code + f'\nYOLO_COMPONENTS["{name}"].render("{id}")'
