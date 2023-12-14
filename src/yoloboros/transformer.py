@@ -6,13 +6,28 @@ import textwrap
 from yoloboros import grammar, constants
 
 
-def pyodidize(body, pyodide=ast.Name(id='pyodide'), locals=None):
+def pyodidize(body, locals=None, globals=None):
     if isinstance(body[-1], ast.Return):
         body[-1] = body[-1].value
+    for i, v in enumerate(body.copy()):
+        if isinstance(v, ast.Expr) and isinstance(v.value, ast.Constant) and isinstance(v.value.value, str):
+            body[i] = ast.Expr(
+                call(
+                    func=ast.Name(id=constants.COMPONENT_TEXT),
+                    args=[ast.Name(id="current"), v.value]
+                )
+            )
+        elif isinstance(v, ast.Expr) and isinstance(v.value, ast.JoinedStr):
+            body[i] = ast.Expr(
+                call(
+                    func=ast.Name(id=constants.COMPONENT_TEXT),
+                    args=[ast.Name(id="current"), v.value]
+                )
+            )
     body = ast.Module(body=body, type_ignores=[])
     body = ast.unparse(ast.fix_missing_locations(body))
     args = [grammar.MultilineConstant(value=body)]
-    if locals:
+    if locals and isinstance(locals, dict):
         items = locals.items()
         args.append(
             ast.Dict(
@@ -25,14 +40,42 @@ def pyodidize(body, pyodide=ast.Name(id='pyodide'), locals=None):
                 ]
             )
         )
-
-        return call(
-            func=ast.Attribute(
-                value=pyodide,
-                attr='runPython'
-            ),
-            args=args
+    elif locals:
+        args.append(
+            ast.Dict(
+                keys=[ast.Constant('locals')],
+                values=[locals]
+            )
         )
+
+    if globals and isinstance(globals, dict):
+        items = globals.items()
+        args.append(
+            ast.Dict(
+                keys=[ast.Constant('globals')],
+                values=[
+                    call(
+                        func=ast.Attribute(value=pyodide, attr='toPy'),
+                        args=[ast.Dict(keys=[i[0] for i in items], values=[i[1] for i in items])],
+                    )
+                ]
+            )
+        )
+    elif globals:
+        args.append(
+            ast.Dict(
+                keys=[ast.Constant('globals')],
+                values=[globals]
+            )
+        )
+
+    return call(
+        func=ast.Attribute(
+            value='pyodide',
+            attr='runPython'
+        ),
+        args=args
+    )
 
 
 def arguments(cls=ast.arguments, **kwargs):
@@ -120,6 +163,10 @@ class JsTranslator(BaseRenderer):
 class NodeRenderer(BaseRenderer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        if app := self.namespace.get('app'):
+            self.pyodide = app().pyodide
+        else:
+            self.pyodide = False
         self.parent_stack = []
         self.with_stack = []
 
@@ -165,7 +212,8 @@ class NodeRenderer(BaseRenderer):
 
     def visit_Constant(self, node):
         if (
-            isinstance(node.value, str)
+            not self.pyodide
+            and isinstance(node.value, str)
             and len(self.parent_stack) > 1
             and not isinstance(self.parent_stack[-2], ast.With)
             and not getattr(self, '_visiting_JoinedStr', False)
@@ -187,9 +235,12 @@ class NodeRenderer(BaseRenderer):
         return node
 
     def visit_JoinedStr(self, node):
-        if len(self.parent_stack) > 1 and not isinstance(
-            self.parent_stack[-2], ast.With
-        ) and not getattr(self, '_visiting_JoinedStr', False):
+        if (
+                not self.pyodide
+                and len(self.parent_stack) > 1
+                and not isinstance(self.parent_stack[-2], ast.With)
+                and not getattr(self, '_visiting_JoinedStr', False)
+        ):
             setattr(self, '_visiting_JoinedStr', True)
             values = [self.visit(value) for value in node.values]
             delattr(self, '_visiting_JoinedStr')
@@ -200,10 +251,48 @@ class NodeRenderer(BaseRenderer):
             )
         return node
 
+    def pyodidize_body(self, node_body):
+        body = []
+        stmts = []
+        locals = ast.Name(id=constants.COMPONENT_LOCALS)
+        for stmt in node_body:
+            if isinstance(stmt, ast.With):
+                if stmts:
+                    body.append(pyodidize(stmts, locals=locals))
+                    stmts.clear()
+                body.append(stmt)
+            else:
+                stmts.append(stmt)
+        if stmts:
+            body.append(pyodidize(stmts, locals=locals))
+        return body
+
     def visit_FunctionDef(self, node):
         if node.name == "render":
             node.name = constants.COMPONENT_RENDER
-            node.body = [self.visit(stmt) for stmt in node.body]
+            if app := self.namespace.get("app"):
+                if app().pyodide:
+                    node.body = self.pyodidize_body(node.body)
+                    node.body.insert(
+                        0,
+                        ast.Assign(
+                            targets=[ast.Name(id=constants.COMPONENT_LOCALS)],
+                            value=call(
+                                func=ast.Attribute(
+                                    value=ast.Name(id="pyodide"),
+                                    attr='toPy',
+                                ),
+                                args=[
+                                    ast.Dict(
+                                        keys=[ast.Constant(constants.COMPONENT_TEXT), ast.Constant('current')],
+                                        values=[ast.Name(id=constants.COMPONENT_TEXT), ast.Name(id='current')]
+                                    )
+                                ],
+                            )
+                        )
+                    )
+
+            node.body = [self.visit(stmt) if isinstance(stmt, ast.With) else stmt for stmt in node.body]
             node.args.args += [
                 ast.keyword(arg="current", value=ast.Constant(None)),
             ]
@@ -230,6 +319,9 @@ class NodeRenderer(BaseRenderer):
 
     def visit_With(self, node):
         self.with_stack.append(node)
+        if app := self.namespace.get("app"):
+           if app().pyodide:
+               node.body = self.pyodidize_body(node.body)
         ret = self._visit_With(node)
         self.with_stack.pop()
         return ret
