@@ -2,6 +2,7 @@
 <p align="center">
   <img src="https://raw.githubusercontent.com/one-two-four-cee-four-one-plus/yoloboros/main/logo.webp" width="250" height="250"/>
 </p>
+<p align="center"><a href="https://yoloboros-47ceb119f8e0.herokuapp.com/">Demo</a></p>
 
 `yoloboros` is a simple library for creating interactive webapps in python. It is framework agnostic and doesn't require any additional dependencies. `yoloboros` provides simple API for creating reusable components in python, generates HTML and js code for them and provides a unified way to communicate between components and server.
 `yoloboros` can be plugged into any web framework, albeit being relatively straightforward with the structure and interaction with the server:
