@@ -264,7 +264,8 @@ class NodeRenderer(BaseRenderer):
                 node.body = self.pyodidize_body(node.body)
                 dict_ = _.dict([
                     (_.c(constants.COMPONENT_TEXT), _.n(id=constants.COMPONENT_TEXT)),
-                    (_.c('current'), _.n(id='current'))
+                    (_.c('current'), _.n(id='current')),
+                    (_.c('self'), _.n(id='self'))
                 ])
                 node.body.insert(0, _(f'{constants.COMPONENT_LOCALS} = pyodide.toPy(...)')(dict_).val())
 
@@ -374,12 +375,14 @@ class NodeRenderer(BaseRenderer):
 
         if item.optional_vars:
             name = item.optional_vars.id
+            lambda_.body.insert(0, _(f'{name} = {constants.COMPONENT_WRAP}(current)').as_js())
             if self.pyodide:
                 lambda_.body.insert(0, _(
                     f'{constants.COMPONENT_LOCALS}.set("{name}", {constants.COMPONENT_WRAP}(current))'
                 ).as_js())
-            else:
-                lambda_.body.insert(0, _(f'{name} = {constants.COMPONENT_WRAP}(current)').as_js())
+                lambda_.body.insert(0, _(
+                    f'{constants.COMPONENT_LOCALS}.set("current", current)'
+                ).as_js())
 
         return ast.Module(body=body, type_ignores=[])
 
@@ -439,9 +442,9 @@ class ActionRenderer(BaseRenderer):
 
         request_func = module(
             grammar.MultilineLambda(
-                args=_.a(args=self.rest_args, vararg=ast.arg("args")),
+                args=_.js(_.a(args=self.rest_args, vararg=ast.arg("args"))),
                 body=[
-                    ast.Return(
+                    _.js(ast.Return(
                         call(
                             func=ast.Name(id=constants.COMPONENT_FETCH),
                             args=[
@@ -457,7 +460,7 @@ class ActionRenderer(BaseRenderer):
                                 ),
                             ]
                         )
-                    ),
+                    )),
                 ]
             )
         )

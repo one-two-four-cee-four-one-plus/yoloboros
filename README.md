@@ -16,99 +16,114 @@
 ### Frameworks integrations
 WIP
 
-### Example
+### Examples
+##### Basic usage
+Application is a container for components. Each application should have a root component.
 ```python
-from yoloboros.client import Application
+from yoloboros import Yoloboros
 
 
-# Application is effecively a container for components
-class App(Application):
+class App(Yoloboros):
     pass
 
 
-class Counter(App.component):
-    def init(self):
-        return {"number": 0}
-
+class Root(App.root):
     def render(self):
-        f"Number: {self.state.number}"
-
-        with p:
-            "Input value to add/substract"
-            with input(id="number") as inp:
-                pass
-
-        with p, button as inc:
-            inc: onclick = action("add", "+")
-            "+"
-
-        with p, button as dec:
-            dec: onclick = action("add", "-")
-            "-"
-
-    def add(self):
-        # this part is executed on client side
-        value = parseInt(document.getElementById("number").value)
-        request = yield {"value": value}  # yield request to the server
-        print(request)  # print the request, this will be printed on server side
-        response = yield {}  # yield response to the client
-        # now client can process the response
-        self.state.number += {"+": value, "-": -value}[request["args"][0]]
-        self.render()
+        pass
 ```
 
-Generated JS will look like this:
-```javascript
-(() => {
-    const identifier = "1";
-    const actions = {};
-    function init(self) {
-        return {"number": 0};
-    };
+###### Purely frontend-side component
+Each component should have a render method, which returns a tree of HTML elements.
+```python
+class Root(App.root):
+    def render(self):
+        with button as btn:
+            with btn.click as evt:
+                console.log(evt)
+            "Log to console"
+```
 
-    function render(self, current=null) {
-        __text(current, [__text(current, "Number: "), self.state.number].join(""));
-        __create_element("p", null, current, (current) => {
-            __text(current, "Input value to add/substract");
-            __create_element("input", {"id": "number"}, current, (current) => {
-                inp = __wrap(current);
-                ;
-            });
-        });
-        __create_element("p", null, current, (current) => {
-            __create_element("button", null, current, (current) => {
-                inc = __wrap(current);
-                inc.setAction(self, "add", "+");
-                __text(current, "+");
-            });
-        });
-        __create_element("p", null, current, (current) => {
-            __create_element("button", null, current, (current) => {
-                dec = __wrap(current);
-                dec.setAction(self, "add", "-");
-                __text(current, "-");
-            });
-        });
-    };
+###### Sever interaction
+`fetch` method is called only once, when component is created. It makes a request to the server and returns a response. `render` method is called every time component is rendered.
+```python
+class Root(App.root):
+    def fetch(self):
+        from random import randint
 
-    function request_add(self, ...args) {
-        __action = "add";
-        function inner_request_add() {
-            value = parseInt(document.getElementById("number").value);
-            return {"value": value};
-        };
-            ;
-        function receive_add(request, response) {
-            self.state.number += {"+": value,"-": - value}[request["args"][0]];
-            self.render();
-        };
-            ;
-        return __fetch(identifier, __action, inner_request_add, receive_add, ...args);
-    };
+        return {'number': randint(0, 100)}
 
-    actions["add"] = request_add;
-    return __make_component(identifier, init, render, actions);
-})();
+    def render(self):
+        with button as btn:
+            with btn.click:
+                console.log(self.state.number)
+            "Log to console"
+```
+
+Ask for a number every time button is clicked. Here `yield` is used to separate server and client code.
+```python
+class Root(App.root):
+    def render(self):
+        with button as btn:
+            with btn.click:
+                request = yield {}
+
+                from random import randint
+                response = yield {'number': randint(0, 100)}
+
+                console.log(response['number'])
+            "Log to console"
+```
+
+###### Nested components
+Components can be nested.
+```python
+class Value(App.component):
+    def init(self):
+        return {'value': None}
+
+    def render(self):
+        with div:
+            f"Value: {self.state.value}<br>"
+
+
+class Root(App.root):
+    def render(self):
+        with Value as val: pass
+
+        with button as btn:
+            with btn.click:
+                request = yield {}
+
+                from random import randint
+                response = yield {'number': randint(0, 100)}
+
+                val.state.value = response['number']
+                val.render()
+            'Generate random number'
+```
+
+### Integrations
+##### Pyodide
+You can use pyodide to run python code in the browser. `yoloboros` provides a simple way to use pyodide in your app. Note that pyodide is quite large and will increase your app size significantly. In addition the user is responsible for downloading pyodide and all the packages used in their app.
+```python
+class App(Yoloboros):
+    pyodide = True
+
+
+class Root(App.root):
+    def init(self):
+        return {'value': 0}
+
+    def render(self):
+        with div:
+            f'Value: {self.state.value}'
+
+        with button as btn:
+            with btn.click:
+                from random import randint
+                self.state.value = randint(0, 100)
+                self.render()
+            'Generate random number'
 ```
 
 ### Installation
