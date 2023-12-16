@@ -276,7 +276,7 @@ class NodeRenderer(BaseRenderer):
                 node.body.insert(0, _(f'{constants.COMPONENT_LOCALS} = pyodide.toPy(...)')(dict_).val())
 
             node.body = [self.visit(stmt) if isinstance(stmt, ast.With) else stmt for stmt in node.body]
-            node.args.args += [ast.keyword(arg="current", value=ast.Constant(None)),]
+            node.args.args += [ast.keyword(arg="current", value=ast.Constant(None))]
             return node
         else:
             return module(

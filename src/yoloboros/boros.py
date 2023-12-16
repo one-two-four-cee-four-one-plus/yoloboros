@@ -150,4 +150,4 @@ class Yoloboros(BaseYoloboros, metaclass=AppicationMeta):
     @classmethod
     def mount(cls, id):
         name = next((c.__name__ for c in cls.component.registry.values() if c.is_root), None)
-        return cls.code + f'\nYOLO_COMPONENTS["{name}"].render("{id}")'
+        return cls.code + f'\nYOLO_COMPONENTS["{name}"].make().render("{id}")'
