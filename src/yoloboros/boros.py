@@ -3,7 +3,7 @@ import uuid
 import inspect
 import textwrap
 
-from yoloboros.transformer import JsTranslator, NodeRenderer, ActionRenderer, FetchRenderer
+from yoloboros.grammar.transplainers import JsTranslator, NodeRenderer, ActionRenderer, FetchRenderer
 from yoloboros import constants
 
 

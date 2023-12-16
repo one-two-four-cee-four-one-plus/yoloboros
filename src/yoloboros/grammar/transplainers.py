@@ -2,8 +2,41 @@ import ast
 import hashlib
 import inspect
 import textwrap
+import html.parser
 
-from yoloboros import grammar, constants
+from yoloboros.grammar import syntax as grammar
+from yoloboros import constants
+
+
+class HTMLRenderer(html.parser.HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.result = ''
+
+    def handle_starttag(self, tag, attrs):
+        self.result += f'<{tag} {self._attrs(attrs)}>'
+
+    def _attrs(self, attrs):
+        ret = []
+        for k, v in attrs:
+            if '"' in v:
+                v = v.replace('"', "'")
+                ret.append(f'{k}={v}')
+            else:
+                ret.append(f"{k}='{v}'")
+        return ' '.join(ret)
+
+    def handle_endtag(self, tag):
+        self.result += f'</{tag}>'
+
+    def handle_data(self, data):
+        self.result += data.replace("\n", "<br>").replace('"', "'").replace(" ", "&nbsp;")
+
+    @classmethod
+    def render(self, value):
+        renderer = HTMLRenderer()
+        renderer.feed(textwrap.dedent(value))
+        return renderer.result
 
 
 def tag_children(node):
@@ -219,10 +252,7 @@ class NodeRenderer(BaseRenderer):
             and not isinstance(self.parent_stack[-2], ast.With)
             and not getattr(self, '_visiting_JoinedStr', False)
         ):
-            const = ast.Constant(
-                textwrap.dedent(node.value).replace("\n", "<br>")
-                .replace('"', "'").replace(" ", "&nbsp;")
-            )
+            const = ast.Constant(HTMLRenderer().render(node.value))
             return _(f'{constants.COMPONENT_TEXT}(current, ...)')(const).val()
         return node
 
