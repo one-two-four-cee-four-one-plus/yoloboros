@@ -230,46 +230,22 @@ class NodeRenderer(BaseRenderer):
             self.pyodide = app().pyodide
         else:
             self.pyodide = False
-        self.parent_stack = []
         self.with_stack = []
 
-    def visit(self, node):
-        if hasattr(
-            node, "_fields"
-        ):  # Ensure this is an AST node and not a list or other iterable
-            node.parent = self.parent_stack[-1] if self.parent_stack else None
-
-        self.parent_stack.append(node)
-        ret = super().visit(node)
-        self.parent_stack.pop()
-        return ret
-
-    def visit_Constant(self, node):
-        if (
-            not self.pyodide
-            and isinstance(node.value, str)
-            and len(self.parent_stack) > 1
-            and not isinstance(self.parent_stack[-2], ast.With)
-            and not getattr(self, '_visiting_JoinedStr', False)
-        ):
-            const = ast.Constant(HTMLRenderer().render(node.value))
-            return _(f'{constants.COMPONENT_TEXT}(current, ...)')(const).val()
-        return node
+    def visit_Expr(self, node):
+        match node:
+            case ast.Expr(ast.Constant(str(value))) if not self.pyodide:
+                const = ast.Constant(HTMLRenderer().render(value))
+                return _(f'{constants.COMPONENT_TEXT}(current, ...)')(const).val()
+            case ast.Expr(ast.JoinedStr(value)) if not self.pyodide:
+                for i, v in enumerate(value):
+                    if isinstance(v, ast.Constant):
+                        value[i].value = HTMLRenderer().render(v.value)
+                return _(f'{constants.COMPONENT_TEXT}(current, ...)')(ast.JoinedStr(value)).val()
+            case _:
+                return node
 
     def visit_FormattedValue(self, node):
-        return node
-
-    def visit_JoinedStr(self, node):
-        if (
-                not self.pyodide
-                and len(self.parent_stack) > 1
-                and not isinstance(self.parent_stack[-2], ast.With)
-                and not getattr(self, '_visiting_JoinedStr', False)
-        ):
-            setattr(self, '_visiting_JoinedStr', True)
-            values = [self.visit(value) for value in node.values]
-            delattr(self, '_visiting_JoinedStr')
-            return _(f'{constants.COMPONENT_TEXT}(current, ...)')(ast.JoinedStr(values)).val()
         return node
 
     def pyodidize_body(self, node_body):
@@ -444,20 +420,17 @@ class ActionRenderer(BaseRenderer):
         # TODO
         # consider this
         # if ...:
-        #     yield
+        #     request = yield {}
         # else:
-        #     yield
+        #     request = yield {}
         #
         # should mark topmost statement as yield
+        req, res = ast.Name(id="request"), ast.Name(id="response")
         match node:
-            case ast.Assign(
-                targets=[ast.Name(id="request")], value=ast.Yield()
-            ):
+            case ast.Assign(targets=[req], value=ast.Yield()) | ast.Yield(value=req):
                 self.target.append(ast.Return(value=node.value.value))
                 self.target = self.response
-            case ast.Assign(
-                targets=[ast.Name(id="response")], value=ast.Yield()
-            ):
+            case ast.Assign(targets=[res], value=ast.Yield()) | ast.Yield(value=res):
                 self.target.append(ast.Return(value=node.value.value))
                 self.target = self.receive
             case _:
