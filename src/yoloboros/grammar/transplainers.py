@@ -1,4 +1,5 @@
 import ast
+import uuid
 import hashlib
 import inspect
 import textwrap
@@ -245,9 +246,6 @@ class NodeRenderer(BaseRenderer):
             case _:
                 return node
 
-    def visit_FormattedValue(self, node):
-        return node
-
     def pyodidize_body(self, node_body):
         body, stmts = [], []
         locals = ast.Name(id=constants.COMPONENT_LOCALS)
@@ -274,8 +272,9 @@ class NodeRenderer(BaseRenderer):
                     (_.c('self'), _.n(id='self'))
                 ])
                 node.body.insert(0, _(f'{constants.COMPONENT_LOCALS} = pyodide.toPy(...)')(dict_).val())
-
-            node.body = [self.visit(stmt) if isinstance(stmt, ast.With) else stmt for stmt in node.body]
+                node.body = [self.visit(stmt) if isinstance(stmt, ast.With) else stmt for stmt in node.body]
+            else:
+                node.body = [self.visit(stmt) for stmt in node.body]
             node.args.args += [ast.keyword(arg="current", value=ast.Constant(None))]
             return node
         else:
@@ -371,6 +370,7 @@ class NodeRenderer(BaseRenderer):
                 func=grammar.JsName(id=constants.COMPONENT_NODE_CREATE),
                 args=[
                     grammar.JsConstant(tag),
+                    grammar.JsConstant(str(uuid.uuid4())),
                     attrs,
                     grammar.JsName(id="current"),
                     lambda_,

@@ -380,6 +380,10 @@ class JsConstant(JsAST, ast.Constant):
     def render(self):
         if self.value is None:
             return "null"
+        if self.value is True:
+            return "true"
+        if self.value is False:
+            return "false"
         return f'"{self.value}"' if isinstance(self.value, str) else str(self.value)
 
 

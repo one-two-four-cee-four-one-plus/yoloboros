@@ -86,9 +86,10 @@ class BaseComponent:
         for k, v in cls.requests.items():
             ret += textwrap.indent(f'__yolo__actions["{k}"] = {v};\n', '    ' * 3)
 
+        is_root = 'true' if cls.is_root else 'false'
         ret += '\n' + textwrap.indent(
             (
-                f"const ret = {constants.COMPONENT_MAKE_FULL};\n"
+                f"const ret = {constants.COMPONENT_MAKE_FULL.format(is_root=is_root)};\n"
                 f"YOLO_COMPONENTS['{cls.__name__}'] = ret;\n"
                 "return ret;"
             ),
@@ -150,4 +151,4 @@ class Yoloboros(BaseYoloboros, metaclass=AppicationMeta):
     @classmethod
     def mount(cls, id):
         name = next((c.__name__ for c in cls.component.registry.values() if c.is_root), None)
-        return cls.code + f'\nYOLO_COMPONENTS["{name}"].make().render("{id}")'
+        return cls.code + f'\nYOLO_ROOT = YOLO_COMPONENTS["{name}"].make();\nYOLO_ROOT.render("{id}")'

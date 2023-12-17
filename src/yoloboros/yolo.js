@@ -1,6 +1,8 @@
+var YOLO_ROOT = null;
 var YOLO_REGISTRY = {};
 var YOLO_COMPONENTS = {};
 var YOLO_RENDER_STACK = [];
+var YOLO_ANCHOR_COUNTER = {};
 
 class YoloWrapper {
     constructor(element) {
@@ -58,16 +60,25 @@ const __yolo__wrap = (element) => {
     return new YoloWrapper(element);
 };
 
-const __yolo__create_element = (tag, attrs=null, parent=null, cb=null) => {
+
+const __yolo__before_root_render = () => {
+    YOLO_ANCHOR_COUNTER = {};
+};
+
+const __yolo__after_root_render = () => {
+};
+
+const __yolo__create_element = (tag, anchor, attrs=null, parent=null, cb=null) => {
     let element = null
     let yolo_elem = tag.startsWith('yolo:');
     let yolo_instance = null;
     if (yolo_elem) {
         element = document.createElement('div');
-        element.setAttribute('id', crypto.randomUUID());
+        element.setAttribute('yolo_for', tag.substring(5));
     } else {
         element = document.createElement(tag);
     }
+    YOLO_RENDER_STACK.push(element);
     if (attrs) {
         for (let key in attrs) {
             if ('style' === key) {
@@ -84,7 +95,14 @@ const __yolo__create_element = (tag, attrs=null, parent=null, cb=null) => {
         }
     }
     if (yolo_elem) {
-        yolo_instance = YOLO_COMPONENTS[tag.substr(5)].make();
+        if (!YOLO_ANCHOR_COUNTER[anchor]) {
+            YOLO_ANCHOR_COUNTER[anchor] = 0;
+        }
+        anchor = `${anchor}-${YOLO_ANCHOR_COUNTER[anchor]++}`;
+        if (!(yolo_instance = YOLO_REGISTRY[anchor])) {
+            yolo_instance = YOLO_REGISTRY[anchor] = YOLO_COMPONENTS[tag.substring(5)].make(anchor);
+        }
+        element.setAttribute('id', anchor);
         element = yolo_instance.render(element);
     }
     if (cb) {
@@ -93,9 +111,7 @@ const __yolo__create_element = (tag, attrs=null, parent=null, cb=null) => {
     if (parent) {
         parent.appendChild(element);
     }
-    if (yolo_elem) {
-        YOLO_RENDER_STACK.pop();
-    }
+    YOLO_RENDER_STACK.pop();
     return element;
 };
 
@@ -111,90 +127,56 @@ const __yolo__text = (element, text) => {
     element.innerHTML += text;
 };
 
-const __walk = (obj, child_getter, cb) => {
-    cb(obj);
-    child_getter(obj).forEach((child) => {
-        __walk(child, child_getter, cb);
-    });
-};
-
 
 class YoloInstance {
-    constructor(component) {
+    constructor(component, anchor=null) {
         this.component = component;
         this.namespace = {};
         this.state = null;
-        this.parent = null;
-        this.children = [];
         let val = component.init(this);
         if (val) { this.state = val; }
-        this.domid = null;
-        this.cid = crypto.randomUUID();
-        YOLO_REGISTRY[this.cid] = this;
-    }
-
-    is_root () {
-        return this.parent === null;
-    }
-
-    flat_children () {
-        let children = [...this.children];
-        __walk(this, (obj) => { return obj.children; }, (obj) => {
-            children.push(obj);
-        });
-        return children;
+        this.cid = anchor ? anchor : crypto.randomUUID();
     }
 
     render(domid_or_element=null) {
         let element = null;
-        this.children = [];
-        this.parent = YOLO_RENDER_STACK[YOLO_RENDER_STACK.length - 1];
-        if (this.parent)
-            this.parent.children.push(this);
-        YOLO_RENDER_STACK.push(this);
+        if (this.component.is_root) {
+            __yolo__before_root_render();
+        }
         if (typeof domid_or_element == 'string') {
-            this.domid = domid_or_element;
-            element = document.getElementById(this.domid);
-            element.innerHTML = '';
-            this.namespace = {};
-            this.component._render(this, element);
+            element = document.getElementById(domid_or_element);
         } else if (domid_or_element instanceof Node) {
             element = domid_or_element;
-            if (domid_or_element.getAttribute('id')) {
-                this.domid = domid_or_element.getAttribute('id')
-            } else {
-                this.domid = crypto.randomUUID();
-                domid_or_element.setAttribute('id', this.domid);
-            }
-
-            domid_or_element.innerHTML = '';
-            this.namespace = {};
-            this.component._render(this, domid_or_element);
-        } else if (this.domid) {
-            element = document.getElementById(this.domid);
-            element.innerHTML = '';
-            this.namespace = {};
-            this.component._render(this, element);
+        } else {
+            element = document.getElementById(this.cid);
+        }
+        element.innerHTML = '';
+        this.namespace = {};
+        element.setAttribute('id', this.cid);
+        this.component._render(this, element);
+        if (this.component.is_root) {
+            __yolo__after_root_render();
         }
         return element;
     }
 }
 
 class YoloComponent {
-    constructor(identifier, init, render, actions) {
+    constructor(identifier, init, render, actions, is_root=false) {
         this.identifier = identifier;
         this.init = init;
         this._render = render;
         this.actions = actions;
+        this.is_root = is_root;
     }
 
-    make() {
-        return new YoloInstance(this);
+    make(anchor=null) {
+        return new YoloInstance(this, anchor);
     }
 }
 
-const __yolo__make_component = (identifier, init, render, actions) => {
-    return new YoloComponent(identifier, init, render, actions);
+const __yolo__make_component = (identifier, init, render, actions, is_root) => {
+    return new YoloComponent(identifier, init, render, actions, is_root);
 };
 
 
@@ -225,3 +207,17 @@ const __yolo__add_event_listener = (wrapper, event, callback) => {
 };
 
 const yolo = (id) => YOLO_REGISTRY[id];
+
+
+const range = (start, end=null) => {
+    if (end === null) {
+        end = start;
+        start = 0;
+    }
+
+    let result = [];
+    for (let i = start; i < end; i++) {
+        result.push(i);
+    }
+    return result;
+};
