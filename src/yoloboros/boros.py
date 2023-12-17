@@ -34,7 +34,7 @@ class ComponentMeta(type):
             if not k.startswith("_") and inspect.isgeneratorfunction(v) and k != 'render' and k != 'fetch':
                 attrs["requests"][k], attrs["responses"][k] = ActionRenderer(
                     v.__name__, v
-                ).build_funcs(use_pyodide=attrs['app']().pyodide)
+                ).build_funcs()
                 del attrs[k]
 
         return super(mcls, ComponentMeta).__new__(mcls, name, bases, attrs)
@@ -55,7 +55,7 @@ class BaseComponent:
     @classmethod
     def build(cls):
         if hasattr(cls, 'fetch'):
-            init, response_fetch = FetchRenderer(cls.identifier, cls.fetch).build_funcs(use_pyodide=cls.app().pyodide)
+            init, response_fetch = FetchRenderer(cls.identifier, cls.fetch).build_funcs()
             cls.responses.setdefault('fetch', response_fetch)
         elif hasattr(cls, 'init'):
             init = JsTranslator(cls.init).walk()
@@ -84,18 +84,16 @@ class BaseComponent:
             """
         ).lstrip()
         for k, v in cls.requests.items():
-            ret += textwrap.indent(f'__yolo__actions["{k}"] = {v};\n', '    ' * 3)
+            if not isinstance(v, str):
+                v = v.render()
+            ret += textwrap.indent(f'{constants.COMPONENT_ACTIONS}["{k}"] = {v};\n', '    ' * 3)
 
         is_root = 'true' if cls.is_root else 'false'
         ret += '\n' + textwrap.indent(
-            (
-                f"const ret = {constants.COMPONENT_MAKE_FULL.format(is_root=is_root)};\n"
-                f"YOLO_COMPONENTS['{cls.__name__}'] = ret;\n"
-                "return ret;"
-            ),
+            f"YOLO_COMPONENTS['{cls.__name__}'] = {constants.COMPONENT_MAKE_FULL.format(is_root=is_root)};\n",
             '    ' * 3
         )
-        ret += '\n' + '    ' * 2 + '})()'
+        ret += '\n' + '    ' * 2 + '})();\n'
         return textwrap.indent(ret, '   ').lstrip(' ')
 
     def __init_subclass__(cls):

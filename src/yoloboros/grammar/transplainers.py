@@ -31,7 +31,11 @@ class HTMLRenderer(html.parser.HTMLParser):
         self.result += f'</{tag}>'
 
     def handle_data(self, data):
-        self.result += data.replace("\n", "<br>").replace('"', "'").replace(" ", "&nbsp;")
+        self.result += (
+            data.replace("\n", "<br>").replace('"', "'")
+            .replace(" ", "&nbsp;").replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
 
     @classmethod
     def render(self, value):
@@ -392,6 +396,34 @@ class NodeRenderer(BaseRenderer):
 
         return ast.Module(body=body, type_ignores=[])
 
+    def visit_AnnAssign(self, node):
+        method = "setAttribute"
+        if isinstance(node.annotation, ast.Name):
+            args = [ast.Constant(node.annotation.id), node.value]
+        else:
+            args = [ast.Constant(node.annotation.value), node.value]
+
+        if isinstance(node.value, ast.Call):
+            name = node.value.func.id
+            if name == "call":
+                method = "setCall"
+            elif name == "action":
+                method = "setAction"
+            else:
+                raise NotImplementedError(f"Unknown method {name}")
+            if isinstance(node.annotation, ast.Name):
+                args = [ast.Name(id="self"), ast.Constant(node.annotation.id), *node.value.args]
+            else:
+                args = [ast.Name(id="self"), ast.Constant(node.annotation.value), *node.value.args]
+        return call(
+            func=ast.Attribute(
+                value=ast.Name(id=node.target.id),
+                attr=method,
+                ctx=ast.Load(),
+            ),
+            args=args,
+        )
+
 
 class ActionRenderer(BaseRenderer):
     def __init__(self, action, value, **kwargs):
@@ -496,7 +528,7 @@ class FetchRenderer(ActionRenderer):
         self.identifier = identifier
         self.target = self.response
 
-    def build_funcs(self, use_pyodide=False):
+    def build_funcs(self):
         self.walk()
 
         response_func = _.f(

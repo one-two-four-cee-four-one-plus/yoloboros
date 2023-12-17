@@ -1,1 +1,1 @@
-from boros import Yoloboros
+from .boros import Yoloboros
