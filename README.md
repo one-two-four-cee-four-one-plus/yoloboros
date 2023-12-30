@@ -13,9 +13,6 @@
 
 `yolobors` is very similar to nagare, but with more expressive API and more flexibility (nagare requires stackless python and doesn't support python 3) and not specifically tailored for data apps like dash.
 
-### Frameworks integrations
-WIP
-
 ### Examples
 ##### Basic usage
 Application is a container for components. Each application should have a root component.
