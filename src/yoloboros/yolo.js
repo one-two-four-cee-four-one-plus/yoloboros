@@ -41,15 +41,15 @@ class YoloWrapper {
         return this.element.getAttribute(name);
     }
 
-    setAction(component, event, name, ...args) {
+    setAction(instance, event, name, ...args) {
         this.element.addEventListener(event, () => {
-            component.actions[name](component, ...args);
+            instance.component.actions[name](instance, ...args);
         });
     }
 
-    setCall(component, event, name, ...args) {
+    setCall(instance, event, name, ...args) {
         this.element.addEventListener(event, () => {
-            component.namespace[name](...args);
+            instance.component.namespace[name](...args);
         });
     }
 }

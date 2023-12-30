@@ -32,9 +32,9 @@ class HTMLRenderer(html.parser.HTMLParser):
 
     def handle_data(self, data):
         self.result += (
-            data.replace("\n", "<br>").replace('"', "'")
+            data.replace('"', "'")
             .replace(" ", "&nbsp;").replace("<", "&lt;")
-            .replace(">", "&gt;")
+            .replace(">", "&gt;").replace("\n", "<br>")
         )
 
     @classmethod
@@ -457,12 +457,17 @@ class ActionRenderer(BaseRenderer):
         #     request = yield {}
         #
         # should mark topmost statement as yield
-        req, res = ast.Name(id="request"), ast.Name(id="response")
         match node:
-            case ast.Assign(targets=[req], value=ast.Yield()) | ast.Yield(value=req):
+            case (
+                    ast.Assign(targets=[ast.Name(id="request")], value=ast.Yield())
+                    | ast.Yield(value=ast.Name(id="request"))
+            ):
                 self.target.append(ast.Return(value=node.value.value))
                 self.target = self.response
-            case ast.Assign(targets=[res], value=ast.Yield()) | ast.Yield(value=res):
+            case (
+                    ast.Assign(targets=[ast.Name(id="response")], value=ast.Yield())
+                    | ast.Yield(value=ast.Name(id="response"))
+            ):
                 self.target.append(ast.Return(value=node.value.value))
                 self.target = self.receive
             case _:
