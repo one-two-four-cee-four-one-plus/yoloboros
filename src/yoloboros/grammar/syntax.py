@@ -39,7 +39,7 @@ class JsModule(JsAST, ast.Module):
     _fields = "body", "type_ignores"
 
     def render(self):
-        return "\n".join(stmt.render() for stmt in self.body)
+        return ";\n".join(stmt.render() for stmt in self.body)
 
 
 # class JsInteractive(JsAST, ast.Interactive):
@@ -114,7 +114,14 @@ class JsAssign(JsAST, ast.Assign):
     def render(self):
         left = " = ".join(t.render() for t in self.targets)
         right = self.value.render()
-        return f"{left} = {right};"
+        return f"{left} = {right}"
+
+
+class Let(JsAssign):
+    def render(self):
+        left = " = ".join(t.render() for t in self.targets)
+        right = self.value.render()
+        return f"let {left} = {right}"
 
 
 class JsAugAssign(JsAST, ast.AugAssign):

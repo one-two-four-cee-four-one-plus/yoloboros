@@ -1,7 +1,5 @@
-var YOLO_ROOT = null;
 var YOLO_REGISTRY = {};
 var YOLO_COMPONENTS = {};
-var YOLO_RENDER_STACK = [];
 var YOLO_ANCHOR_COUNTER = {};
 
 class YoloWrapper {
@@ -14,19 +12,19 @@ class YoloWrapper {
     }
 
     get y() {
-        return yolo(this.id)
+        return YOLO_REGISTRY[this.id]
     }
 
     get state() {
-        return yolo(this.id).state
+        return YOLO_REGISTRY[this.id].state
     }
 
     set state(value) {
-        yolo(this.id).state = value
+        YOLO_REGISTRY[this.id].state = value
     }
 
     render() {
-        yolo(this.id).render()
+        YOLO_REGISTRY[this.id].render()
     }
 
     get e() {
@@ -68,6 +66,7 @@ const __yolo__before_root_render = () => {
 const __yolo__after_root_render = () => {
 };
 
+
 const __yolo__create_element = (tag, anchor, attrs=null, parent=null, cb=null) => {
     let element = null
     let yolo_elem = tag.startsWith('yolo:');
@@ -78,7 +77,6 @@ const __yolo__create_element = (tag, anchor, attrs=null, parent=null, cb=null) =
     } else {
         element = document.createElement(tag);
     }
-    YOLO_RENDER_STACK.push(element);
     if (attrs) {
         for (let key in attrs) {
             if ('style' === key) {
@@ -111,7 +109,6 @@ const __yolo__create_element = (tag, anchor, attrs=null, parent=null, cb=null) =
     if (parent) {
         parent.appendChild(element);
     }
-    YOLO_RENDER_STACK.pop();
     return element;
 };
 
@@ -204,20 +201,4 @@ const __yolo__fetch = (identifier, action, request_json, callback, ...args) => {
 
 const __yolo__add_event_listener = (wrapper, event, callback) => {
     wrapper.element.addEventListener(event, callback);
-};
-
-const yolo = (id) => YOLO_REGISTRY[id];
-
-
-const range = (start, end=null) => {
-    if (end === null) {
-        end = start;
-        start = 0;
-    }
-
-    let result = [];
-    for (let i = start; i < end; i++) {
-        result.push(i);
-    }
-    return result;
 };

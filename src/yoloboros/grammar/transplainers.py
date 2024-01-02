@@ -92,6 +92,9 @@ class Node:
     def as_js(self):
         return JsTranslator(self.value).walk()
 
+    def render(self):
+        return self.as_js().render()
+
     def val(self):
         return self.value
 
@@ -231,18 +234,14 @@ class JsTranslator(BaseRenderer):
 class NodeRenderer(BaseRenderer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        if app := self.namespace.get('app'):
-            self.pyodide = app().pyodide
-        else:
-            self.pyodide = False
         self.with_stack = []
 
     def visit_Expr(self, node):
         match node:
-            case ast.Expr(ast.Constant(str(value))) if not self.pyodide:
+            case ast.Expr(ast.Constant(str(value))):
                 const = ast.Constant(HTMLRenderer().render(value))
                 return _(f'{constants.COMPONENT_TEXT}(current, ...)')(const).val()
-            case ast.Expr(ast.JoinedStr(value)) if not self.pyodide:
+            case ast.Expr(ast.JoinedStr(value)):
                 for i, v in enumerate(value):
                     if isinstance(v, ast.Constant):
                         value[i].value = HTMLRenderer().render(v.value)
@@ -250,35 +249,10 @@ class NodeRenderer(BaseRenderer):
             case _:
                 return node
 
-    def pyodidize_body(self, node_body):
-        body, stmts = [], []
-        locals = ast.Name(id=constants.COMPONENT_LOCALS)
-        for stmt in node_body:
-            if isinstance(stmt, ast.With):
-                if stmts:
-                    body.append(pyodidize(stmts, locals=locals))
-                    stmts.clear()
-                body.append(stmt)
-            else:
-                stmts.append(stmt)
-        if stmts:
-            body.append(pyodidize(stmts, locals=locals))
-        return body
-
     def visit_FunctionDef(self, node):
         if node.name == "render":
             node.name = constants.COMPONENT_RENDER
-            if self.pyodide:
-                node.body = self.pyodidize_body(node.body)
-                dict_ = _.dict([
-                    (_.c(constants.COMPONENT_TEXT), _.n(id=constants.COMPONENT_TEXT)),
-                    (_.c('current'), _.n(id='current')),
-                    (_.c('self'), _.n(id='self'))
-                ])
-                node.body.insert(0, _(f'{constants.COMPONENT_LOCALS} = pyodide.toPy(...)')(dict_).val())
-                node.body = [self.visit(stmt) if isinstance(stmt, ast.With) else stmt for stmt in node.body]
-            else:
-                node.body = [self.visit(stmt) for stmt in node.body]
+            node.body = [self.visit(stmt) for stmt in node.body]
             node.args.args += [ast.keyword(arg="current", value=ast.Constant(None))]
             return node
         else:
@@ -292,8 +266,6 @@ class NodeRenderer(BaseRenderer):
 
     def visit_With(self, node):
         self.with_stack.append(node)
-        if self.pyodide:
-            node.body = self.pyodidize_body(node.body)
         ret = self._visit_With(node)
         self.with_stack.pop()
         return ret
@@ -331,6 +303,9 @@ class NodeRenderer(BaseRenderer):
             ],
             keywords=[],
         )
+
+    def process_optional_vars(self, node, name):
+        pass
 
     def _visit_With(self, node):
         if len(node.items) > 1:
@@ -385,14 +360,8 @@ class NodeRenderer(BaseRenderer):
 
         if item.optional_vars:
             name = item.optional_vars.id
-            lambda_.body.insert(0, _(f'{name} = {constants.COMPONENT_WRAP}(current)').as_js())
-            if self.pyodide:
-                lambda_.body.insert(0, _(
-                    f'{constants.COMPONENT_LOCALS}.set("{name}", {constants.COMPONENT_WRAP}(current))'
-                ).as_js())
-                lambda_.body.insert(0, _(
-                    f'{constants.COMPONENT_LOCALS}.set("current", current)'
-                ).as_js())
+            lambda_.body.insert(0, _(f'{name} = {constants.COMPONENT_WRAP}(current)'))
+            self.process_optional_vars(lambda_, name)
 
         return ast.Module(body=body, type_ignores=[])
 
@@ -425,6 +394,60 @@ class NodeRenderer(BaseRenderer):
         )
 
 
+class PyodideNodeRenderer(NodeRenderer):
+    def pyodidize_body(self, node_body):
+        body, stmts = [], []
+        locals = ast.Name(id=constants.COMPONENT_LOCALS)
+        for stmt in node_body:
+            if isinstance(stmt, ast.With):
+                if stmts:
+                    body.append(pyodidize(stmts, locals=locals))
+                    stmts.clear()
+                body.append(stmt)
+            else:
+                stmts.append(stmt)
+        if stmts:
+            body.append(pyodidize(stmts, locals=locals))
+        return body
+
+    def visit_With(self, node):
+        self.with_stack.append(node)
+        node.body = self.pyodidize_body(node.body)
+        ret = self._visit_With(node)
+        self.with_stack.pop()
+        return ret
+
+    def visit_FunctionDef(self, node):
+        if node.name == "render":
+            node.name = constants.COMPONENT_RENDER
+            node.body = self.pyodidize_body(node.body)
+            dict_ = _.dict([
+                (_.c(constants.COMPONENT_TEXT), _.n(id=constants.COMPONENT_TEXT)),
+                (_.c('current'), _.n(id='current')),
+                (_.c('self'), _.n(id='self'))
+            ])
+            node.body.insert(0, _(f'{constants.COMPONENT_LOCALS} = pyodide.toPy(...)')(dict_).val())
+            node.body = [self.visit(stmt) if isinstance(stmt, ast.With) else stmt for stmt in node.body]
+            node.args.args += [ast.keyword(arg="current", value=ast.Constant(None))]
+            return node
+        else:
+            return module(
+                node,
+                _(f'self.namespace.{node.name} = {node.name}').val()
+            )
+
+    def visit_Expr(self, node):
+        return node
+
+    def process_optional_vars(self, lambda_, name):
+        lambda_.body.insert(0, _(
+            f'{constants.COMPONENT_LOCALS}.set("{name}", {constants.COMPONENT_WRAP}(current))'
+        ))
+        lambda_.body.insert(0, _(
+            f'{constants.COMPONENT_LOCALS}.set("current", current)'
+        ))
+
+
 class ActionRenderer(BaseRenderer):
     def __init__(self, action, value, **kwargs):
         super().__init__(value, **kwargs)
@@ -434,10 +457,6 @@ class ActionRenderer(BaseRenderer):
         self.receive = []
         self.rest_args = None
         self.target = self.request
-        if app := self.namespace.get('app'):
-            self.pyodide = app().pyodide
-        else:
-            self.pyodide = False
 
     def visit_Module(self, node):
         assert len(node.body) == 1
@@ -476,10 +495,6 @@ class ActionRenderer(BaseRenderer):
     def build_funcs(self, text_request=True):
         self.walk()
 
-        if self.pyodide:
-            self.request = pyodidize(self.request)
-            self.receive = pyodidize(self.request)
-
         request_func = module(
             grammar.MultilineLambda(
                 args=_.js(_.a(args=self.rest_args, vararg=ast.arg("args"))),
@@ -516,7 +531,6 @@ class ActionRenderer(BaseRenderer):
             body=self.response,
         )
 
-
         request_func = ast.fix_missing_locations(request_func)
         response_func = ast.fix_missing_locations(response_func)
 
@@ -527,11 +541,21 @@ class ActionRenderer(BaseRenderer):
         return (request_func, ns.popitem()[1])
 
 
+class PyodideActionRenderer(ActionRenderer):
+    def walk(self):
+        super().walk()
+        self.request = pyodidize(self.request)
+        self.receive = pyodidize(self.request)
+
+
 class FetchRenderer(ActionRenderer):
     def __init__(self, identifier, value, **kwargs):
         super().__init__('fetch', value)
         self.identifier = identifier
         self.target = self.response
+
+    def process_receive(self):
+        pass
 
     def build_funcs(self):
         self.walk()
@@ -555,8 +579,8 @@ class FetchRenderer(ActionRenderer):
         else:
             self.receive = [_('self.state = response').val()]
 
-        if self.pyodide:
-            self.receive = pyodidize(self.receive)
+
+        self.process_receive()
 
         receive_func = grammar.MultilineLambda(
             args=_.a(
@@ -597,3 +621,8 @@ class FetchRenderer(ActionRenderer):
             JsTranslator(request_func).walk().render(),
             ns.popitem()[1]
         )
+
+
+class PyodideFetchRenderer(FetchRenderer):
+    def process_receive(self):
+        self.receive = pyodidize(self.receive)

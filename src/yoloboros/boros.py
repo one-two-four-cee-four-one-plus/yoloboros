@@ -3,7 +3,7 @@ import uuid
 import inspect
 import textwrap
 
-from yoloboros.grammar.transplainers import JsTranslator, NodeRenderer, ActionRenderer, FetchRenderer
+from yoloboros.grammar import transplainers
 from yoloboros import constants
 
 
@@ -30,13 +30,6 @@ class ComponentMeta(type):
         if name in {'__yolo__component', '__yolo__root'}:
             return super(mcls, ComponentMeta).__new__(mcls, name, bases, attrs)
 
-        for k, v in attrs.copy().items():
-            if not k.startswith("_") and inspect.isgeneratorfunction(v) and k != 'render' and k != 'fetch':
-                attrs["requests"][k], attrs["responses"][k] = ActionRenderer(
-                    v.__name__, v
-                ).build_funcs()
-                del attrs[k]
-
         return super(mcls, ComponentMeta).__new__(mcls, name, bases, attrs)
 
 
@@ -53,21 +46,28 @@ class BaseComponent:
         return component.responses[action](component, request)
 
     @classmethod
-    def build(cls):
+    def build(cls, app):
+        for k, v in vars(cls).copy().items():
+            if not k.startswith("_") and inspect.isgeneratorfunction(v) and k != 'render' and k != 'fetch':
+                cls.requests[k], cls.responses[k] = app.action_renderer(
+                    v.__name__, v
+                ).build_funcs()
+                delattr(cls, k)
+
         if hasattr(cls, 'fetch'):
-            init, response_fetch = FetchRenderer(cls.identifier, cls.fetch).build_funcs()
+            init, response_fetch = app.fetch_renderer(cls.identifier, cls.fetch).build_funcs()
             cls.responses.setdefault('fetch', response_fetch)
         elif hasattr(cls, 'init'):
-            init = JsTranslator(cls.init).walk()
+            init = transplainers.JsTranslator(cls.init).walk()
             init.body[0].name = constants.COMPONENT_INIT
             init = textwrap.dedent(init.render())
         else:
             init = f"const {constants.COMPONENT_INIT} = () => null;\n"
 
         if hasattr(cls, 'render'):
-            ns = dict(app=cls.app())
-            render = ast.fix_missing_locations(NodeRenderer(cls.render, namespace=ns).walk())
-            render = JsTranslator(render).walk().render()
+            ns = dict(app=app)
+            render = ast.fix_missing_locations(app.node_renderer(cls.render, namespace=ns).walk())
+            render = transplainers.JsTranslator(render).walk().render()
             if actions := ns.get('actions'):
                 for action, (request, response) in actions.items():
                     cls.requests.setdefault(action, request)
@@ -126,8 +126,6 @@ class BaseYoloboros:
 
 class Yoloboros(BaseYoloboros, metaclass=AppicationMeta):
     pyodide: bool = False
-    packages: list = []
-    vdom: bool = False
 
     @classmethod
     def process(cls, data):
@@ -136,17 +134,34 @@ class Yoloboros(BaseYoloboros, metaclass=AppicationMeta):
     @classmethod
     @property
     def code(cls):
-        packages = ''
-        if cls.pyodide and cls.packages:
-            packages += 'await window.pyodide.loadPackage("micropip");\n'
-            packages += 'const micropip = window.pyodide.pyimport("micropip");\n'
-            for package_name in cls.packages:
-                packages += f'await micropip.install("{package_name}");\n'
-
         components = cls.component.registry.values()
-        return packages + ';\n'.join(c.build() for c in components)
+        return ';\n'.join(c.build(cls) for c in components)
+
+    @classmethod
+    @property
+    def node_renderer(cls):
+        if cls.pyodide:
+            return transplainers.PyodideNodeRenderer
+        else:
+            return transplainers.NodeRenderer
+
+    @classmethod
+    @property
+    def action_renderer(cls):
+        if cls.pyodide:
+            return transplainers.PyodideActionRenderer
+        else:
+            return transplainers.ActionRenderer
+
+    @classmethod
+    @property
+    def fetch_renderer(cls):
+        if cls.pyodide:
+            return transplainers.PyodideFetchRenderer
+        else:
+            return transplainers.FetchRenderer
 
     @classmethod
     def mount(cls, id):
         name = next((c.__name__ for c in cls.component.registry.values() if c.is_root), None)
-        return cls.code + f'\nYOLO_ROOT = YOLO_COMPONENTS["{name}"].make();\nYOLO_ROOT.render("{id}")'
+        return cls.code + f'YOLO_COMPONENTS["{name}"].make().render("{id}")'
