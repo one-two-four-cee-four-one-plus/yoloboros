@@ -91,9 +91,20 @@ $body
 };
     """
 
+class JsMethodDef(JsFunctionDef):
+    _template = """$name($args) {
+$body
+};
+    """
+
 
 class JsClassDef(JsAST, ast.ClassDef):
     _fields = "name", "bases", "keywords", "body", "decorator_list"
+
+    def render(self):
+        return f"class {self.name} extends {self.bases[0].render()} {{\n" + "\n".join(
+            f"{textwrap.indent(stmt.render(), '    ').rstrip()}" for stmt in self.body
+        ) + "\n}\n"
 
 
 class JsReturn(JsAST, ast.Return):

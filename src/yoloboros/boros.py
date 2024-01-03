@@ -75,7 +75,8 @@ class BaseComponent:
         else:
             render = f"const {constants.COMPONENT_RENDER} = () => null;\n"
 
-        ret = textwrap.dedent(
+        ret = '\n'.join(component.react_code for component in app.react.registry.values())
+        ret += textwrap.dedent(
             f"""(() => {{
             const {constants.COMPONENT_IDENTIFIER} = "{cls.identifier}";
             const {constants.COMPONENT_ACTIONS} = {{}};\n
@@ -102,11 +103,23 @@ class BaseComponent:
             cls.registry[cls.identifier] = cls
 
 
+class BaseReactComponent:
+    registry = {}
+
+    def __init_subclass__(cls):
+        if cls.__name__ not in {'__yolo__react'}:
+            cls.registry[cls.__name__] = cls
+            cls.react_code = transplainers.ReactTransplainer(cls).walk().render()
+
+
 class AppicationMeta(type):
     def __new__(mcls, name, bases, attrs):
         box = Box()
         class __yolo__component(BaseComponent, metaclass=ComponentMeta, app=box):
             is_root = False
+            registry = dict()
+
+        class __yolo__react(BaseReactComponent):
             registry = dict()
 
         class __yolo__root(__yolo__component):
@@ -115,6 +128,7 @@ class AppicationMeta(type):
         attrs["_name"] = name
         attrs["component"] = __yolo__component
         attrs["root"] = __yolo__root
+        attrs["react"] = __yolo__react
         ret = super(mcls, AppicationMeta).__new__(mcls, name, bases, attrs)
         box._set(ret)
         return ret

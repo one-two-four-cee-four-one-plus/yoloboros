@@ -4,6 +4,7 @@ import hashlib
 import inspect
 import textwrap
 import html.parser
+import string
 
 from yoloboros.grammar import syntax as grammar
 from yoloboros import constants
@@ -316,9 +317,43 @@ class NodeRenderer(BaseRenderer):
 
         components = [c.__name__ for c in self.namespace['app']().component.registry.values()]
         bindings = [getattr(w.items[0].optional_vars, 'id', None) for w in self.with_stack[:-1]]
+        react_component = None
 
         item = node.items[0]
         match item.context_expr:
+            case ast.Call() if item.context_expr.func.id in components:
+                attrs = JsTranslator(
+                    ast.Dict(
+                        keys=[ast.Constant(key.arg) for key in item.context_expr.keywords],
+                        values=[self.visit(value.value) for value in item.context_expr.keywords],
+                    )
+                ).walk()
+                tag = 'yolo:' + item.context_expr.func.id
+            case ast.Attribute() if item.context_expr.attr in components:
+                attrs = grammar.JsConstant(None)
+                tag = 'yolo:' + item.context_expr.attr
+            case ast.Name() if item.context_expr.id in components:
+                attrs = grammar.JsConstant(None)
+                tag = 'yolo:' + item.context_expr.id
+            case ast.Call() if item.context_expr.func.id[0] in string.ascii_uppercase:
+                attrs = JsTranslator(
+                    ast.Dict(
+                        keys=[ast.Constant(key.arg) for key in item.context_expr.keywords],
+                        values=[self.visit(value.value) for value in item.context_expr.keywords],
+                    )
+                ).walk()
+                tag = 'react:' + item.context_expr.func.id
+                react_component = item.context_expr.func.id
+            case ast.Attribute() if item.context_expr.attr[0] in string.ascii_uppercase:
+                attrs = grammar.JsConstant(None)
+                tag = 'react:' + item.context_expr.attr
+                react_component = item.context_expr.attr
+            case ast.Name() if item.context_expr.id[0] in string.ascii_uppercase:
+                attrs = grammar.JsConstant(None)
+                tag = 'react:' + item.context_expr.id
+                react_component = item.context_expr.id
+            case ast.Attribute() if item.context_expr.value.id in bindings:
+                return self.inlined_with(node)
             case ast.Call():
                 attrs = JsTranslator(
                     ast.Dict(
@@ -327,14 +362,6 @@ class NodeRenderer(BaseRenderer):
                     )
                 ).walk()
                 tag = item.context_expr.func.id
-            case ast.Attribute() if item.context_expr.attr in components:
-                attrs = grammar.JsConstant(None)
-                tag = 'yolo:' + item.context_expr.attr
-            case ast.Name() if item.context_expr.id in components:
-                attrs = grammar.JsConstant(None)
-                tag = 'yolo:' + item.context_expr.id
-            case ast.Attribute() if item.context_expr.value.id in bindings:
-                return self.inlined_with(node)
             case _:
                 attrs = grammar.JsConstant(None)
                 tag = item.context_expr.id
@@ -352,6 +379,8 @@ class NodeRenderer(BaseRenderer):
                     grammar.JsConstant(str(uuid.uuid4())),
                     attrs,
                     grammar.JsName(id="current"),
+                    (_(f'{{"{react_component}": {react_component}}}')
+                     if react_component else grammar.JsConstant(None)),
                     lambda_,
                 ],
                 keywords=[],
@@ -626,3 +655,31 @@ class FetchRenderer(ActionRenderer):
 class PyodideFetchRenderer(FetchRenderer):
     def process_receive(self):
         self.receive = pyodidize(self.receive)
+
+
+class ReactTransplainer(JsTranslator):
+    def visit_ClassDef(self, node):
+        return grammar.JsClassDef(
+            name=node.name,
+            bases=[_('React.Component')],
+            body=[self.visit(stmt) for stmt in node.body],
+        )
+
+    def visit_With(self, node):
+        # TODO: translate to createElement
+        body = [self.visit(stmt) for stmt in node.body]
+        return _(module(*body)).as_js()
+
+    def visit_FunctionDef(self, node):
+        return grammar.JsMethodDef(
+            name=node.name,
+            args=_.js_a(
+                args=node.args.args,
+                vararg=node.args.vararg,
+                kwonlyargs=node.args.kwonlyargs,
+                kw_defaults=node.args.kw_defaults,
+                kwarg=node.args.kwarg,
+                defaults=node.args.defaults,
+            ),
+            body=[self.visit(stmt) for stmt in node.body]
+        )
