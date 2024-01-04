@@ -658,28 +658,153 @@ class PyodideFetchRenderer(FetchRenderer):
 
 
 class ReactTransplainer(JsTranslator):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.with_stack = []
+
     def visit_ClassDef(self, node):
+        for stmt in node.body:
+            stmt._parent_is_cls = True
+
+        body = [self.visit(stmt) for stmt in node.body]
+
         return grammar.JsClassDef(
             name=node.name,
             bases=[_('React.Component')],
-            body=[self.visit(stmt) for stmt in node.body],
+            body=body,
         )
 
     def visit_With(self, node):
-        # TODO: translate to createElement
-        body = [self.visit(stmt) for stmt in node.body]
-        return _(module(*body)).as_js()
+        self.with_stack.append(node)
+        ret = self._visit_With(node)
+        self.with_stack.pop()
+        return ret
+
+    def _visit_With(self, node):
+        if len(node.items) > 1:
+            nested = ast.With(items=node.items[1:], body=node.body)
+            node.items = node.items[:1]
+            node.body = [nested]
+            return self.visit(node)
+
+        bindings = [getattr(w.items[0].optional_vars, 'id', None) for w in self.with_stack[:-1]]
+
+        item = node.items[0]
+        match item.context_expr:
+            case ast.Call():
+                attrs = JsTranslator(
+                    ast.Dict(
+                        keys=[ast.Constant(key.arg) for key in item.context_expr.keywords],
+                        values=[self.visit(value.value) for value in item.context_expr.keywords],
+                    )
+                ).walk()
+                tag = item.context_expr.func.id
+            case ast.Name() if item.context_expr.id[0] in string.ascii_uppercase:
+                attrs = grammar.JsConstant(None)
+                tag = 'react:' + item.context_expr.id
+            case ast.Name():
+                attrs = grammar.JsDict(keys=[], values=[])
+                tag = item.context_expr.id
+            case ast.Attribute() if item.context_expr.value.id in bindings:
+                func_def = _.f(name="inlined_with", args=_.a(), body=node.body)
+                unparsed = ast.unparse(ast.fix_missing_locations(func_def))
+                name = f'anon_{hashlib.md5(unparsed.encode()).hexdigest()}'
+                event = item.context_expr.attr
+                if not event.startswith('on'):
+                    event = 'on' + event.capitalize()
+                arg = item.optional_vars.id if item.optional_vars else None
+
+                # should be the last parent
+                parent = self.with_stack[-2]
+                if parent._name != item.context_expr.value.id: raise Exception("")
+
+                lambda_ = grammar.MultilineLambda(
+                    args=_.js_a(args=[arg]) if arg else _.js_a(),
+                    body=[self.visit(stmt) for stmt in node.body]
+                )
+                parent._attrs.keys.append(_(f'"{event}"'))
+                parent._attrs.values.append(lambda_)
+                return grammar.JsPass()
+            case _:
+                raise Exception("")
+
+        node._module = grammar.JsModule(body=[])
+        node._attrs = attrs
+        node._name = item.optional_vars.id if item.optional_vars else None
+        iife = grammar.IIFE(
+            func=grammar.MultilineLambda(
+                args=_.js_a(),
+                body=[
+                    grammar.Let(targets=[_('layout')], value=_('[]')),
+                    *(self.visit(stmt) for stmt in node.body),
+                    _('return layout')
+                ],
+            ),
+            args=[],
+            keywords=[]
+        )
+        replacement = grammar.JsCall(
+            func=_('React.createElement'),
+            args=[grammar.JsConstant(tag), attrs, iife],
+            keywords=[]
+        )
+        node._module.body.append(_('layout.push(...)')(replacement))
+        return node._module
 
     def visit_FunctionDef(self, node):
-        return grammar.JsMethodDef(
-            name=node.name,
-            args=_.js_a(
-                args=node.args.args,
-                vararg=node.args.vararg,
-                kwonlyargs=node.args.kwonlyargs,
-                kw_defaults=node.args.kw_defaults,
-                kwarg=node.args.kwarg,
-                defaults=node.args.defaults,
-            ),
-            body=[self.visit(stmt) for stmt in node.body]
-        )
+        if node.name == 'render':
+            return grammar.JsMethodDef(
+                name=node.name,
+                args=_.js_a(
+                    args=node.args.args,
+                    vararg=node.args.vararg,
+                    kwonlyargs=node.args.kwonlyargs,
+                    kw_defaults=node.args.kw_defaults,
+                    kwarg=node.args.kwarg,
+                    defaults=node.args.defaults,
+                ),
+                body=[
+                    grammar.Let(targets=[_('layout')], value=_('[]')),
+                    *(self.visit(stmt) for stmt in node.body),
+                    _('return React.createElement("div", None, layout)')
+                ]
+            )
+        elif hasattr(node, '_parent_is_cls'):
+            return grammar.JsMethodDef(
+                name=node.name,
+                args=_.js_a(
+                    args=[self.visit(arg) for arg in node.args.args],
+                    vararg=node.args.vararg,
+                    kwonlyargs=[self.visit(arg) for arg in node.args.kwonlyargs],
+                    kw_defaults=[self.visit(arg) for arg in node.args.kw_defaults],
+                    kwarg=node.args.kwarg,
+                    defaults=[self.visit(arg) for arg in node.args.defaults],
+                ),
+                body=[self.visit(stmt) for stmt in node.body],
+            )
+        else:
+            return grammar.JsFunctionDef(
+                name=node.name,
+                args=_.js_a(
+                    args=[self.visit(arg) for arg in node.args.args],
+                    vararg=node.args.vararg,
+                    kwonlyargs=[self.visit(arg) for arg in node.args.kwonlyargs],
+                    kw_defaults=[self.visit(arg) for arg in node.args.kw_defaults],
+                    kwarg=node.args.kwarg,
+                    defaults=[self.visit(arg) for arg in node.args.defaults],
+                ),
+                body=[self.visit(stmt) for stmt in node.body],
+            )
+
+    def visit_Expr(self, node):
+        match node:
+            case ast.Expr(ast.Constant(str(value))):
+                const = ast.Constant(HTMLRenderer().render(value))
+                return _('layout.push(...)')(const)
+            case ast.Expr(ast.JoinedStr(value)):
+                for i, v in enumerate(value):
+                    if isinstance(v, ast.Constant):
+                        value[i].value = HTMLRenderer().render(v.value)
+                return _('layout.push(...)')(ast.JoinedStr(value))
+            case _:
+                return grammar.JsExpr(value=self.visit(node.value))

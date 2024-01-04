@@ -72,6 +72,7 @@ const __yolo__create_element = (tag, anchor, attrs=null, parent=null, react_mapp
     let yolo_elem = tag.startsWith('yolo:');
     if (tag.startsWith('react:')) {
         // TODO: add callback logic
+        // TODO: add props logic
         component = tag.substring(6);
         element = React.createElement(react_mapping[component], attrs, null);
         container = document.createElement('div');
