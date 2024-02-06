@@ -2,6 +2,7 @@ import ast
 import uuid
 import inspect
 import textwrap
+import pathlib
 
 from yoloboros.grammar import transplainers
 from yoloboros import constants
@@ -150,6 +151,11 @@ class Yoloboros(BaseYoloboros, metaclass=AppicationMeta):
     def code(cls):
         components = cls.component.registry.values()
         return ';\n'.join(c.build(cls) for c in components)
+
+    @classmethod
+    @property
+    def prelude(cls):
+        return (pathlib.Path(__file__).parent / 'yolo.js').read_text()
 
     @classmethod
     @property
